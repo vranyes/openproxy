@@ -1,0 +1,14 @@
+{
+  "name": "openproxy",
+  "version": "0.1.0",
+  "description": "OpenAI-compatible proxy for LibreChat backed by opencode provider packages and models.dev",
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.7.0",
+    "zod": "^3.23.0"
+  }
+}
