@@ -16,6 +16,7 @@ export const UpstreamSchema = z.object({
   baseURL: z.string().url(),
   apiKey: z.string().optional(),
   apiKeyEnv: z.string().optional(),
+  discover: z.boolean().optional(),
   models: z.array(ModelSchema).min(1),
 });
 

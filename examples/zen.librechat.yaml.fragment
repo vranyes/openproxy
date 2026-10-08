@@ -1,0 +1,16 @@
+# Paste under endpoints: in librechat.yaml. Regenerate contexts from:
+#   curl http://openproxy:8080/librechat/tokenConfig
+endpoints:
+  custom:
+    - name: openproxy-zen
+      apiKey: dummy
+      baseURL: http://openproxy:8080/v1
+      models:
+        default: [glm-5.2, deepseek-v4-pro]
+        fetch: true
+      titleConvo: true
+      titleModel: current_model
+      modelDisplayLabel: openproxy
+      tokenConfig:
+        glm-5.2: { context: 1000000 }
+        deepseek-v4-pro: { context: 1000000 }

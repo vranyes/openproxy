@@ -20,9 +20,9 @@ function findModel(config: GatewayConfig, id: string): Route | null {
 }
 
 export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
-  const fetchUpstream: UpstreamFetcher = opts.fetchUpstream ?? ((url, init) => fetch(url, init));
+  const fetchUpstream: UpstreamFetcher = opts.fetchUpstream ?? ((url, init) => globalThis.fetch(url, init));
 
-  async function fetch(req: Request): Promise<Response> {
+  async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/healthz") {
@@ -30,9 +30,31 @@ export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
     }
 
     if (req.method === "GET" && url.pathname === "/v1/models") {
-      const data = config.upstreams.flatMap((u) =>
-        u.models.map((m) => ({ id: m.id, object: "model", owned_by: u.id })),
-      );
+      const data: Array<{ id: string; object: string; owned_by: string; context_length: number | null }> =
+        config.upstreams.flatMap((u) =>
+          u.models.map((m) => ({ id: m.id, object: "model", owned_by: u.id, context_length: m.context })),
+        );
+      const known = new Set(data.map((m) => m.id));
+      for (const u of config.upstreams) {
+        if (!u.discover) continue;
+        try {
+          const headers: Record<string, string> = {};
+          const apiKey = resolveApiKey(u);
+          if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+          const res = await fetchUpstream(`${u.baseURL}/models`, { headers });
+          if (!res.ok) continue;
+          const listed = (await res.json()) as { data?: Array<{ id?: string }> };
+          for (const m of listed.data ?? []) {
+            if (typeof m.id === "string" && !known.has(m.id)) {
+              known.add(m.id);
+              data.push({ id: m.id, object: "model", owned_by: u.id, context_length: null });
+            }
+          }
+        } catch (e) {
+          if (process.env.OPENPROXY_DEBUG) console.error("discovery failed:", String(e).slice(0, 300));
+          continue;
+        }
+      }
       return Response.json({ object: "list", data });
     }
 
@@ -72,5 +94,5 @@ export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
     return Response.json({ error: { message: "not found", type: "invalid_request_error" } }, { status: 404 });
   }
 
-  return { fetch };
+  return { fetch: handle };
 }

@@ -42,8 +42,73 @@ describe("GET /v1/models", () => {
     const body = await res.json();
     expect(body.object).toBe("list");
     expect(body.data).toEqual([
-      { id: "qwen3-coder-30b", object: "model", owned_by: "local" },
+      { id: "qwen3-coder-30b", object: "model", owned_by: "local", context_length: 131072 },
     ]);
+  });
+});
+
+const discoverConfig: GatewayConfig = {
+  upstreams: [
+    {
+      id: "zen",
+      package: "@opencode-ai/ai/providers/openai-compatible",
+      baseURL: "http://zen.test/go/v1",
+      apiKey: "zen-key",
+      discover: true,
+      models: [
+        { id: "glm-5", context: 131072 },
+      ],
+    },
+  ],
+};
+
+describe("GET /v1/models with discover:true", () => {
+  test("merges live upstream ids with registry context overlay", async () => {
+    const app = createApp(discoverConfig, {
+      fetchUpstream: stubUpstream((req) => {
+        if (req.url === "http://zen.test/go/v1/models") {
+          return Response.json({
+            object: "list",
+            data: [
+              { id: "glm-5", object: "model", owned_by: "opencode" },
+              { id: "kimi-k3", object: "model", owned_by: "opencode" },
+            ],
+          });
+        }
+        return new Response("nope", { status: 500 });
+      }),
+    });
+    const res = await app.fetch(new Request("http://gateway/v1/models"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual([
+      { id: "glm-5", object: "model", owned_by: "zen", context_length: 131072 },
+      { id: "kimi-k3", object: "model", owned_by: "zen", context_length: null },
+    ]);
+  });
+
+  test("falls back to registry when upstream discovery fails", async () => {
+    const app = createApp(discoverConfig, {
+      fetchUpstream: stubUpstream(() => new Response("boom", { status: 500 })),
+    });
+    const res = await app.fetch(new Request("http://gateway/v1/models"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual([
+      { id: "glm-5", object: "model", owned_by: "zen", context_length: 131072 },
+    ]);
+  });
+
+  test("does not call upstream without discover flag", async () => {
+    const seen: string[] = [];
+    const app = createApp(config, {
+      fetchUpstream: stubUpstream((req) => {
+        seen.push(req.url);
+        return new Response("nope", { status: 500 });
+      }),
+    });
+    await app.fetch(new Request("http://gateway/v1/models"));
+    expect(seen).toEqual([]);
   });
 });
 
@@ -89,6 +154,32 @@ describe("POST /v1/chat/completions (non-stream)", () => {
       }),
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /v1/chat/completions (stream)", () => {
+  test("relays the upstream SSE byte stream untouched", async () => {
+    const sse =
+      `data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}\n\n` +
+      `data: [DONE]\n\n`;
+    const app = createApp(
+      config,
+      { fetchUpstream: stubUpstream(() => new Response(sse, { headers: { "content-type": "text/event-stream" } })) },
+    );
+
+    const res = await app.fetch(
+      new Request("http://gateway/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "qwen3-coder-30b", messages: [{ role: "user", content: "hello" }], stream: true }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const text = await res.text();
+    expect(text).toContain(`"content":"hi"`);
+    expect(text.trimEnd().endsWith("data: [DONE]")).toBe(true);
   });
 });
 
