@@ -1,0 +1,24 @@
+# ── Version control & CI ───────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.github
+
+# ── Local environment / secrets: never sent to the builder ─────────────
+.env
+.env.*
+
+# ── Dependencies: installed fresh by the deps stage ────────────────────
+node_modules
+
+# ── Not needed to build or run the image ───────────────────────────────
+tests
+*.md
+
+# ── Editor / OS noise ──────────────────────────────────────────────────
+.DS_Store
+.idea
+.vscode
+
+# ── Bun binary lockfiles (the text bun.lock is used) ───────────────────
+*.lockb

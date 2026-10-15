@@ -1,0 +1,184 @@
+---
+# Build and push the openproxy server image to
+# registry.vranyes.com/openproxy/server.
+#
+# Triggers:
+#   - push to main: tag `latest` plus an immutable `sha-<short>`.
+#   - tag push `v*`: tag the release name (e.g. `v1.2.3`) plus `sha-<short>`.
+#   - workflow_dispatch: build at the given tag (empty -> `sha-<short>`).
+#
+# Auth: a GitHub OIDC token is exchanged for a zot registry token — no stored
+# credentials. Pattern copied from minimusic/.github/workflows/build.yaml
+# (see zot-auth-debug.yaml there for token diagnostics).
+name: Image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (defaults to sha-<short>)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+# One run per ref; a newer push to the same ref supersedes the running one.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY_HOST: registry.vranyes.com
+  IMAGE: registry.vranyes.com/openproxy/server
+  # Target cluster arch is unknown: build amd64 only (no qemu, fast).
+  # Widen to `linux/amd64,linux/arm64` once the arch is known.
+  PLATFORMS: linux/amd64
+  CACHE_SCOPE: openproxy-server
+
+jobs:
+  # Mirror ci.yml inside this workflow so a red main never ships as `latest`.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+
+  build:
+    name: Build and push
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        name: Resolve image tags
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          sha_tag="sha-${GITHUB_SHA:0:7}"
+          case "$EVENT_NAME" in
+            push)
+              if [ "$REF_TYPE" = "tag" ]; then
+                case "$REF_NAME" in
+                  v*) tags="${REF_NAME},${sha_tag}" ;;
+                  *) echo "::error::unexpected tag '$REF_NAME' (want v*)"; exit 1 ;;
+                esac
+              else
+                tags="latest,${sha_tag}"
+              fi
+              ;;
+            workflow_dispatch)
+              if [ -n "${INPUT_TAG:-}" ]; then
+                case "$INPUT_TAG" in
+                  *,*|*[[:space:]]*) echo "::error::tag must not contain commas or whitespace"; exit 1 ;;
+                esac
+                tags="${INPUT_TAG},${sha_tag}"
+              else
+                tags="${sha_tag}"
+              fi
+              ;;
+            *)
+              echo "::error::unhandled event $EVENT_NAME"; exit 1 ;;
+          esac
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Resolved tags: $tags"
+
+      # Build WITHOUT auth first. The heavy @opencode/ai dependency layer can
+      # push a cold build past the 300s OIDC token lifetime; warming the
+      # persistent buildx cache here means the authenticated push below is
+      # cache-only and finishes well inside a fresh token's window.
+      - name: Build (warm cache, no push)
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          IFS=',' read -ra arr <<< "$TAGS"
+          for t in "${arr[@]}"; do tag_args+=(-t "${IMAGE}:${t}"); done
+          docker buildx build \
+            --platform "${PLATFORMS}" \
+            --provenance=false --sbom=false \
+            --cache-from "type=gha,scope=${CACHE_SCOPE}" \
+            --cache-to "type=gha,scope=${CACHE_SCOPE},mode=max" \
+            "${tag_args[@]}" \
+            .
+
+      - id: oidc
+        name: Get GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          ID_TOKEN=$(curl -sSL -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=zot" | jq -r '.value')
+          if [ -z "${ID_TOKEN:-}" ] || [ "$ID_TOKEN" = "null" ]; then
+            echo "::error::Empty OIDC token response (audience=zot)"
+            exit 1
+          fi
+          echo "::add-mask::$ID_TOKEN"
+          echo "id_token=$ID_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to registry
+        shell: bash
+        env:
+          ID_TOKEN: ${{ steps.oidc.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ID_TOKEN"
+          # The registry's OIDC exchange intermittently returns 403 under
+          # concurrent logins; back off and retry before failing the build.
+          delay=5
+          for attempt in 1 2 3 4 5 6; do
+            if printf '%s' "$ID_TOKEN" | docker login "$REGISTRY_HOST" \
+                 --username "oauth" --password-stdin; then
+              exit 0
+            fi
+            echo "::warning::docker login attempt $attempt failed; retrying in ${delay}s"
+            sleep "$delay"
+            delay=$((delay * 2))
+          done
+          echo "::error::docker login failed after 6 attempts"
+          exit 1
+
+      # Cache is warm, so this rebuild is fast. Explicit OCI image output (a
+      # single image manifest, no provenance/SBOM index) is what zot accepts —
+      # a classic `docker push` manifest is rejected as "manifest invalid".
+      - name: Push
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          IFS=',' read -ra arr <<< "$TAGS"
+          for t in "${arr[@]}"; do tag_args+=(-t "${IMAGE}:${t}"); done
+          docker buildx build \
+            --output "type=image,oci-mediatypes=true,push=true" \
+            --platform "${PLATFORMS}" \
+            --provenance=false --sbom=false \
+            --cache-from "type=gha,scope=${CACHE_SCOPE}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.title=openproxy" \
+            --label "org.opencontainers.image.description=OpenAI-compatible proxy for LibreChat backed by OpenCode provider packages and models.dev" \
+            "${tag_args[@]}" \
+            .
