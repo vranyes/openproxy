@@ -39,3 +39,28 @@ export function fakeUpstreamServer(handler: (req: Request) => Response | Promise
 export function sse(frames: string[]): string {
   return frames.join("\n\n") + "\n\n";
 }
+
+/**
+ * Parse an SSE body into `{ event, data }` pairs. `event` is null for a plain
+ * `data:`-only stream (chat completions); both lines may be absent within a
+ * block, which is then skipped.
+ */
+export function parseSseEvents(text: string): Array<{ event: string | null; data: string }> {
+  const events: Array<{ event: string | null; data: string }> = [];
+  for (const block of text.split("\n\n")) {
+    const lines = block.split("\n").filter((line) => line.length > 0);
+    let event: string | null = null;
+    let data = "";
+    let hasData = false;
+    for (const line of lines) {
+      if (line.startsWith("event:")) event = line.slice("event:".length).trim();
+      else if (line.startsWith("data:")) {
+        data += (hasData ? "\n" : "") + line.slice("data:".length).trimStart();
+        hasData = true;
+      }
+    }
+    if (hasData || event !== null) events.push({ event, data });
+  }
+  return events;
+}
+

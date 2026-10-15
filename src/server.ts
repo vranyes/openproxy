@@ -7,6 +7,7 @@ import {
 } from "./config";
 import { createAdapter, selectAdapter } from "./adapter";
 import { defaultAiRuntime, type AiRuntime } from "./adapter/ai";
+import { createResponsesAdapter } from "./adapter/responses";
 import type { AdapterMeta } from "./adapter/types";
 import { buildLibreChatFragment, fragmentResponse, type FragmentModel } from "./librechat";
 import { createModelResolver, tokenConfigOf, type ResolvedModel } from "./registry";
@@ -82,6 +83,37 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       code: "rate_limit_exceeded",
       headers: { "retry-after": String(Math.max(1, Math.ceil(v.retryAfterMs / 1000))) },
     });
+  }
+
+  /**
+   * Shared prep for the POST generation routes: parse JSON -> 400, resolve the
+   * route -> 404, then apply the global/per-upstream bucket -> 429. Sets the log
+   * context as soon as the route is known. Returns a `Response` to short-circuit.
+   */
+  async function prepareGeneration(
+    req: Request,
+    config: GatewayConfig,
+    ctx: LogContext,
+  ): Promise<{ route: Route; body: Record<string, unknown> } | Response> {
+    let body: Record<string, unknown>;
+    try {
+      body = (await req.json()) as Record<string, unknown>;
+    } catch {
+      return errorResponse("invalid JSON body", 400);
+    }
+    const requested = typeof body.model === "string" ? body.model : null;
+    const route = requested !== null ? findModel(config, requested) : null;
+    if (!route) {
+      return errorResponse(`model not found: ${String(body.model)}`, 404);
+    }
+    ctx.model = requested;
+    ctx.upstream = route.upstream.id;
+    // F7c: apply the global and/or per-upstream bucket right after the route
+    // resolves (and after the auth gate), inside the logged path so a 429
+    // emits exactly one `request` event.
+    const limited = rateLimitResponse(route.upstream.id);
+    if (limited) return limited;
+    return { route, body };
   }
 
   async function handle(req: Request, ctx: LogContext): Promise<Response> {
@@ -171,24 +203,9 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     }
 
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-      let body: Record<string, unknown>;
-      try {
-        body = (await req.json()) as Record<string, unknown>;
-      } catch {
-        return errorResponse("invalid JSON body", 400);
-      }
-      const requested = typeof body.model === "string" ? body.model : null;
-      const route = requested !== null ? findModel(config, requested) : null;
-      if (!route) {
-        return errorResponse(`model not found: ${String(body.model)}`, 404);
-      }
-      ctx.model = requested;
-      ctx.upstream = route.upstream.id;
-      // F7c: apply the global and/or per-upstream bucket right after the route
-      // resolves (and after the auth gate), inside the logged path so a 429
-      // emits exactly one `request` event.
-      const limited = rateLimitResponse(route.upstream.id);
-      if (limited) return limited;
+      const prep = await prepareGeneration(req, config, ctx);
+      if (prep instanceof Response) return prep;
+      const { route, body } = prep;
       const kind = selectAdapter(route.upstream);
       if (kind === "passthrough" && NON_CHAT_NATIVE_PACKAGES.has(route.upstream.package)) {
         safeLog(logger, {
@@ -199,6 +216,25 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         });
       }
       const adapter = createAdapter(kind, { fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
+      const resolved = resolver.resolve(route.upstream, route.model);
+      const result = await adapter.handle({
+        upstream: route.upstream,
+        model: resolved.model,
+        body,
+        signal: req.signal,
+        cost: resolved.cost,
+      });
+      ctx.completed = result.completed ?? null;
+      return result.response;
+    }
+
+    // F7d: the OpenAI Responses API is always served by the translating adapter
+    // (a `passthrough` upstream still normalizes Responses -> Chat -> IR).
+    if (req.method === "POST" && url.pathname === "/v1/responses") {
+      const prep = await prepareGeneration(req, config, ctx);
+      if (prep instanceof Response) return prep;
+      const { route, body } = prep;
+      const adapter = createResponsesAdapter({ fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
       const resolved = resolver.resolve(route.upstream, route.model);
       const result = await adapter.handle({
         upstream: route.upstream,

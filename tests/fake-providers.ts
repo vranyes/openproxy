@@ -47,6 +47,15 @@ export function gatewayChatRequest(model: string, body: Record<string, unknown> 
   });
 }
 
+/** An OpenAI Responses gateway request body. */
+export function gatewayResponsesRequest(model: string, body: Record<string, unknown> = {}): Request {
+  return new Request("http://gateway/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model, input: "hello", ...body }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Anthropic Messages (named `event:` SSE lines)
 // ---------------------------------------------------------------------------
