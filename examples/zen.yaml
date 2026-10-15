@@ -4,7 +4,7 @@
 # Context windows below are overlaid from models.dev (registry wins over discovery).
 upstreams:
   - id: zen
-    package: "@opencode-ai/ai/providers/openai-compatible"
+    package: "@opencode/ai/providers/openai-compatible"
     baseURL: https://opencode.ai/zen/go/v1
     apiKeyEnv: ZEN_API_KEY
     discover: true

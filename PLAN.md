@@ -16,7 +16,7 @@ Build a LiteLLM-like gateway **specifically for LibreChat**, backed by OpenCode'
 | Decision | Rationale |
 |---|---|
 | Inbound = Chat Completions | LibreChat `custom` endpoint without `provider:` speaks this best (tools, vision, `titleConvo`, SSE). Avoids forking LibreChat. |
-| Runtime = Bun/Node, not Go | Reusable translation layer (`@opencode-ai/ai` provider packages, AI SDK) is JS. Rewriting Responses↔Messages↔Chat mapping in Go duplicates OpenCode. |
+| Runtime = Bun/Node, not Go | Reusable translation layer (`@opencode/ai` provider packages, AI SDK) is JS. Rewriting Responses↔Messages↔Chat mapping in Go duplicates OpenCode. |
 | No hand-rolled translation | Delegate to provider packages: `model(modelID, settings)` where settings = `{ apiKey, baseURL, headers, body, limits }`. |
 | Metadata = models.dev | OpenCode builds its catalog from `https://models.dev` (`GET /api.json`), then overlays `opencode.json`. Reuse `limit.context`, `limit.output`, `capabilities`, costs. Explicit per-model override wins. |
 | Optional control plane = `@opencode-ai/sdk` | `createOpencodeClient({ baseUrl })` → `client.config.providers()` for introspection. Not on the completion hot path. |
@@ -26,13 +26,13 @@ Build a LiteLLM-like gateway **specifically for LibreChat**, backed by OpenCode'
 
 Data plane (translation — highest value):
 
-- `@opencode-ai/ai/providers/openai-compatible`
-- `@opencode-ai/ai/providers/openai/chat`, `.../openai/responses`
-- `@opencode-ai/ai/providers/anthropic`, `.../anthropic-compatible`
-- `@opencode-ai/ai/providers/google`, `.../azure/*`, `.../openrouter`, `.../xai`, `.../amazon-bedrock/*`
+- `@opencode/ai/providers/openai-compatible`
+- `@opencode/ai/providers/openai/chat`, `.../openai/responses`
+- `@opencode/ai/providers/anthropic`, `.../anthropic-compatible`
+- `@opencode/ai/providers/google`, `.../azure/*`, `.../openrouter`, `.../xai`, `.../amazon-bedrock/*`
 - AI SDK contract: `aisdk:@ai-sdk/openai-compatible` (requires `aisdk:` prefix)
 - Local override: absolute `file://` URL package
-- Pin versions: naming drifted between `@opencode/ai/...` (v1 docs) and `@opencode-ai/ai/...` (v2 docs).
+- `@opencode/ai` is the published package (v2.0.29, Effect-based); `@opencode-ai/ai` has only bootstrap/dev builds — do not use it. Pin an exact version.
 
 > Docs: `https://opencode.ai/v2/docs/providers`, `https://v2.opencode.ai/providers`
 
@@ -100,7 +100,7 @@ Upstream `/v1/models` metadata (`meta.llamaswap.context_length`, OpenRouter `con
 ```yaml
 upstreams:
   - id: openai
-    package: "@opencode-ai/ai/providers/openai/responses"
+    package: "@opencode/ai/providers/openai/responses"
     baseURL: https://api.openai.com/v1
     apiKeyEnv: OPENAI_API_KEY
     models:
@@ -113,7 +113,7 @@ upstreams:
         dropParams: [stop]
 
   - id: anthropic
-    package: "@opencode-ai/ai/providers/anthropic"
+    package: "@opencode/ai/providers/anthropic"
     baseURL: https://api.anthropic.com
     apiKeyEnv: ANTHROPIC_API_KEY
     models:
@@ -121,7 +121,7 @@ upstreams:
         context: 200000
 
   - id: local
-    package: "@opencode-ai/ai/providers/openai-compatible"
+    package: "@opencode/ai/providers/openai-compatible"
     baseURL: http://ollama:11434/v1
     apiKeyEnv: null               # omit env for no-auth endpoints
     models:

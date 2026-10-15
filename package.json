@@ -8,6 +8,7 @@
     "start": "bun src/index.ts"
   },
   "dependencies": {
+    "@opencode/ai": "2.0.29",
     "yaml": "^2.7.0",
     "zod": "^3.23.0"
   }

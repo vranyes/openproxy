@@ -6,7 +6,7 @@ const config: GatewayConfig = {
   upstreams: [
     {
       id: "local",
-      package: "@opencode-ai/ai/providers/openai-compatible",
+      package: "@opencode/ai/providers/openai-compatible",
       baseURL: "http://upstream.test/v1",
       apiKey: "test-key",
       models: [
@@ -51,7 +51,7 @@ const discoverConfig: GatewayConfig = {
   upstreams: [
     {
       id: "zen",
-      package: "@opencode-ai/ai/providers/openai-compatible",
+      package: "@opencode/ai/providers/openai-compatible",
       baseURL: "http://zen.test/go/v1",
       apiKey: "zen-key",
       discover: true,
@@ -189,5 +189,34 @@ describe("GET /librechat/tokenConfig", () => {
     const res = await app.fetch(new Request("http://gateway/librechat/tokenConfig"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ "qwen3-coder-30b": { context: 131072 } });
+  });
+});
+
+const noContextConfig: GatewayConfig = {
+  upstreams: [
+    { id: "local", package: "@opencode/ai/providers/openai-compatible", baseURL: "http://upstream.test/v1", models: [{ id: "mystery-model" }] },
+  ],
+};
+
+describe("models without a declared context", () => {
+  test("GET /v1/models reports context_length null", async () => {
+    const app = createApp(noContextConfig, {
+      fetchUpstream: stubUpstream(() => new Response("nope", { status: 500 })),
+    });
+    const res = await app.fetch(new Request("http://gateway/v1/models"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toEqual([
+      { id: "mystery-model", object: "model", owned_by: "local", context_length: null },
+    ]);
+  });
+
+  test("GET /librechat/tokenConfig omits models without context", async () => {
+    const app = createApp(noContextConfig, {
+      fetchUpstream: stubUpstream(() => new Response("nope", { status: 500 })),
+    });
+    const res = await app.fetch(new Request("http://gateway/librechat/tokenConfig"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
   });
 });

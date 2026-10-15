@@ -11,7 +11,7 @@ describe("live zen upstream", () => {
       upstreams: [
         {
           id: "zen",
-          package: "@opencode-ai/ai/providers/openai-compatible",
+          package: "@opencode/ai/providers/openai-compatible",
           baseURL: "https://opencode.ai/zen/go/v1",
           discover: true,
           models: [{ id: "glm-5.2", context: 1000000 }],

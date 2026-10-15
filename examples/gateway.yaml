@@ -1,6 +1,6 @@
 upstreams:
   - id: openai
-    package: "@opencode-ai/ai/providers/openai/responses"
+    package: "@opencode/ai/providers/openai/responses"
     baseURL: https://api.openai.com/v1
     apiKeyEnv: OPENAI_API_KEY
     models:
@@ -13,7 +13,7 @@ upstreams:
         dropParams: [stop]
 
   - id: anthropic
-    package: "@opencode-ai/ai/providers/anthropic"
+    package: "@opencode/ai/providers/anthropic"
     baseURL: https://api.anthropic.com
     apiKeyEnv: ANTHROPIC_API_KEY
     models:
@@ -21,8 +21,9 @@ upstreams:
         context: 200000
 
   - id: local
-    package: "@opencode-ai/ai/providers/openai-compatible"
+    package: "@opencode/ai/providers/openai-compatible"
     baseURL: http://ollama:11434/v1
+    apiKeyEnv: null
     models:
       - id: qwen3-coder-30b
         upstream: qwen3-coder:30b

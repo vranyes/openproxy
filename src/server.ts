@@ -32,7 +32,7 @@ export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
     if (req.method === "GET" && url.pathname === "/v1/models") {
       const data: Array<{ id: string; object: string; owned_by: string; context_length: number | null }> =
         config.upstreams.flatMap((u) =>
-          u.models.map((m) => ({ id: m.id, object: "model", owned_by: u.id, context_length: m.context })),
+          u.models.map((m) => ({ id: m.id, object: "model", owned_by: u.id, context_length: m.context ?? null })),
         );
       const known = new Set(data.map((m) => m.id));
       for (const u of config.upstreams) {
@@ -61,7 +61,8 @@ export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
     if (req.method === "GET" && url.pathname === "/librechat/tokenConfig") {
       const tokenConfig: Record<string, { context: number }> = {};
       for (const u of config.upstreams) {
-        for (const m of u.models) tokenConfig[m.id] = { context: m.context };
+        // Models without a known context are omitted until models.dev resolution (F6).
+        for (const m of u.models) if (m.context !== undefined) tokenConfig[m.id] = { context: m.context };
       }
       return Response.json(tokenConfig);
     }
