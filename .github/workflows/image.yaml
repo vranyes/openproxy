@@ -35,9 +35,11 @@ concurrency:
 env:
   REGISTRY_HOST: registry.vranyes.com
   IMAGE: registry.vranyes.com/openproxy/server
-  # Target cluster arch is unknown: build amd64 only (no qemu, fast).
-  # Widen to `linux/amd64,linux/arm64` once the arch is known.
-  PLATFORMS: linux/amd64
+  # Multi-arch: build both so the image runs on amd64 and arm64 nodes (and on
+  # arm64 Macs for local testing). arm64 is emulated via QEMU on the amd64
+  # runner (see the setup-qemu step). This produces an OCI image index; zot
+  # accepts it (minimusic already pushes multi-arch images to the same registry).
+  PLATFORMS: linux/amd64,linux/arm64
   CACHE_SCOPE: openproxy-server
 
 jobs:
@@ -62,6 +64,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # arm64 runs on the amd64 runner via QEMU/binfmt. Must precede buildx.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -160,9 +166,10 @@ jobs:
           echo "::error::docker login failed after 6 attempts"
           exit 1
 
-      # Cache is warm, so this rebuild is fast. Explicit OCI image output (a
-      # single image manifest, no provenance/SBOM index) is what zot accepts —
-      # a classic `docker push` manifest is rejected as "manifest invalid".
+      # Cache is warm, so this rebuild is fast. Explicit OCI output (an OCI
+      # image index over the amd64+arm64 manifests; no provenance/SBOM
+      # attestations) is what zot accepts — a classic `docker push` manifest is
+      # rejected as "manifest invalid".
       - name: Push
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
