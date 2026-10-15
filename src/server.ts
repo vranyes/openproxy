@@ -12,6 +12,7 @@ import { buildLibreChatFragment, fragmentResponse, type FragmentModel } from "./
 import { createModelResolver, tokenConfigOf, type ResolvedModel } from "./registry";
 import type { ModelsDevIndex } from "./modelsdev";
 import { errorResponse } from "./ops/errors";
+import { authToken, isAuthorized, resolveAuth, unauthorizedResponse } from "./ops/auth";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
 
 export type UpstreamFetcher = (url: string, init: RequestInit) => Promise<Response>;
@@ -73,6 +74,13 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
 
     if (req.method === "GET" && url.pathname === "/healthz") {
       return Response.json({ status: "ok" });
+    }
+
+    // F7a: gate every data route. Runs inside `handle` (logged `fetch` wrapper)
+    // so a 401/misconfigured response still emits exactly one `request` event.
+    const auth = resolveAuth(config.auth);
+    if (auth.mode === "misconfigured" || (auth.mode === "enforced" && !isAuthorized(req, auth.config))) {
+      return unauthorizedResponse();
     }
 
     if (req.method === "GET" && url.pathname === "/v1/models") {
@@ -140,7 +148,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         buildLibreChatFragment({
           name: lc?.name ?? "openproxy",
           baseURL: lc?.baseURL ?? `${url.origin}/v1`,
-          apiKey: lc?.apiKey ?? "dummy",
+          apiKey: lc?.apiKey ?? authToken(config.auth) ?? "dummy",
           models,
         }),
       );

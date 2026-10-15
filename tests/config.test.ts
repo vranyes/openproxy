@@ -201,3 +201,28 @@ describe("librechat config", () => {
     ).toThrow();
   });
 });
+
+describe("auth config", () => {
+  test("rejects an empty auth block (requires token or tokenEnv)", () => {
+    expect(() => GatewayConfigSchema.parse({ upstreams: [baseUpstream()], auth: {} })).toThrow(
+      /auth requires either token or tokenEnv/,
+    );
+  });
+
+  test("tokenEnv parses", () => {
+    const cfg = GatewayConfigSchema.parse({ upstreams: [baseUpstream()], auth: { tokenEnv: "X" } });
+    expect(cfg.auth).toEqual({ tokenEnv: "X" });
+  });
+
+  test("token with header and raw scheme parses", () => {
+    const cfg = GatewayConfigSchema.parse({
+      upstreams: [baseUpstream()],
+      auth: { token: "t", header: "x-api-key", scheme: "raw" },
+    });
+    expect(cfg.auth).toEqual({ token: "t", header: "x-api-key", scheme: "raw" });
+  });
+
+  test("is optional", () => {
+    expect(parse().auth).toBeUndefined();
+  });
+});

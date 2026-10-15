@@ -100,9 +100,23 @@ export const LibreChatSchema = z.object({
   apiKey: z.string().optional(),
 });
 
+// F7a: config-driven client auth for the data routes. Open by default; a token
+// or tokenEnv enables enforcement on every route except GET /healthz.
+export const AuthSchema = z
+  .object({
+    token: z.string().min(1).optional(),
+    tokenEnv: z.string().min(1).optional(),
+    header: z.string().min(1).optional(), // default "authorization"
+    scheme: z.enum(["bearer", "raw"]).optional(), // default "bearer"
+  })
+  .refine((a) => a.token !== undefined || a.tokenEnv !== undefined, {
+    message: "auth requires either token or tokenEnv",
+  });
+
 export const GatewayConfigSchema = z.object({
   upstreams: z.array(UpstreamSchema).min(1),
   librechat: LibreChatSchema.optional(),
+  auth: AuthSchema.optional(),
 });
 
 export type GatewayModel = z.infer<typeof ModelSchema>;
@@ -110,6 +124,7 @@ export type GatewayUpstream = z.infer<typeof UpstreamSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
 export type ModelsDevOverride = z.infer<typeof ModelsDevOverrideSchema>;
 export type LibreChatConfig = z.infer<typeof LibreChatSchema>;
+export type GatewayAuthConfig = z.infer<typeof AuthSchema>;
 export type ConfigProvider = () => GatewayConfig;
 /** Config-level adapter value; the runtime canonicalizes it to `adapter/types.ts`'s `AdapterKind`. */
 export type AdapterKindConfig = z.infer<typeof AdapterKindSchema>;

@@ -1,5 +1,6 @@
 import { createApp } from "./server";
 import { createModelsDevStore } from "./modelsdev";
+import { authStartupWarning } from "./ops/auth";
 import { createConfigStore } from "./ops/config";
 import { jsonLogger } from "./ops/log";
 
@@ -15,6 +16,11 @@ const modelsDev = createModelsDevStore({ logger });
 // Do NOT pass the bare value (snapshot).
 const app = createApp(() => store.current, { logger, modelsdev: () => modelsDev.index });
 void modelsDev.refresh(); // non-blocking startup fetch
+
+// F7a: one startup line describing the auth posture (warn when open, error when
+// misconfigured). Never emitted from createApp.
+const authWarning = authStartupWarning(store.current.auth);
+if (authWarning) logger(authWarning);
 
 Bun.serve({ port, fetch: app.fetch });
 logger({ level: "info", msg: "listening", port, config: configPath });
