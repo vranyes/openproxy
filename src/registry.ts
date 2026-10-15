@@ -7,6 +7,7 @@
 // equally, the model stays unresolved and a warn-once entry is logged. The
 // config model is never mutated: `resolve()` returns a fresh copy.
 import type { GatewayModel, GatewayUpstream, ModelsDevOverride } from "./config";
+import type { ModelCost } from "./cost";
 import type { ModelMatch, ModelsDevIndex, ModelsDevModel } from "./modelsdev";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
 
@@ -24,6 +25,8 @@ export interface ResolvedModel {
   maxOutput?: number;
   maxOutputSource: MetadataSource;
   capabilities: ResolvedCapabilities;
+  cost: ModelCost | null;
+  costSource: MetadataSource;
   modelsDev: { provider: string; model: string } | null;
 }
 
@@ -85,6 +88,29 @@ function visionOf(m: GatewayModel, entry: ModelsDevModel): boolean | undefined {
   if (entry.attachment === true) return true;
   if (entry.modalities?.input?.includes("image") === true) return true;
   return false;
+}
+
+/** Keep only the recognized price fields (models.dev snake_case -> camelCase). */
+function costFromEntry(entry: ModelsDevModel): ModelCost | undefined {
+  const c = entry.cost;
+  if (c === undefined) return undefined;
+  const out: ModelCost = {};
+  if (c.input !== undefined) out.input = c.input;
+  if (c.output !== undefined) out.output = c.output;
+  if (c.cache_read !== undefined) out.cacheRead = c.cache_read;
+  if (c.cache_write !== undefined) out.cacheWrite = c.cache_write;
+  return out;
+}
+
+/** A fresh copy of an explicit config cost (never aliases the parsed object). */
+function costFromConfig(m: GatewayModel): ModelCost | null {
+  if (m.cost === undefined) return null;
+  const out: ModelCost = {};
+  if (m.cost.input !== undefined) out.input = m.cost.input;
+  if (m.cost.output !== undefined) out.output = m.cost.output;
+  if (m.cost.cacheRead !== undefined) out.cacheRead = m.cost.cacheRead;
+  if (m.cost.cacheWrite !== undefined) out.cacheWrite = m.cost.cacheWrite;
+  return out;
 }
 
 export function createModelResolver(
@@ -256,6 +282,8 @@ export function createModelResolver(
       maxOutput: m.maxOutput,
       maxOutputSource: m.maxOutput !== undefined ? "explicit" : "none",
       capabilities,
+      cost: costFromConfig(m),
+      costSource: m.cost !== undefined ? "explicit" : "none",
       modelsDev: null,
     };
   }
@@ -298,6 +326,22 @@ export function createModelResolver(
       maxOutputSource = "none";
     }
 
+    let cost: ModelCost | null;
+    let costSource: MetadataSource;
+    if (m.cost !== undefined) {
+      cost = costFromConfig(m);
+      costSource = "explicit";
+    } else {
+      const mdCost = costFromEntry(entry);
+      if (mdCost !== undefined) {
+        cost = mdCost;
+        costSource = "modelsdev";
+      } else {
+        cost = null;
+        costSource = "none";
+      }
+    }
+
     return {
       upstream: u,
       model,
@@ -305,6 +349,8 @@ export function createModelResolver(
       maxOutput,
       maxOutputSource,
       capabilities: contextCapabilities(m, entry),
+      cost,
+      costSource,
       modelsDev: { provider: mm.provider, model: mm.model },
     };
   }

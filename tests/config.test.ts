@@ -91,6 +91,22 @@ describe("dropParams", () => {
   });
 });
 
+describe("model cost", () => {
+  test("parses a full cost block", () => {
+    const cfg = parse({ models: [{ id: "m", cost: { input: 0.25, output: 2, cacheRead: 0.025, cacheWrite: 0.05 } }] });
+    expect(cfg.upstreams[0]!.models[0]!.cost).toEqual({ input: 0.25, output: 2, cacheRead: 0.025, cacheWrite: 0.05 });
+  });
+
+  test("is optional and absent parses to undefined", () => {
+    expect(parse().upstreams[0]!.models[0]!.cost).toBeUndefined();
+  });
+
+  test("rejects a negative price", () => {
+    expect(() => parse({ models: [{ id: "m", cost: { input: -1 } }] })).toThrow();
+    expect(() => parse({ models: [{ id: "m", cost: { output: -0.5 } }] })).toThrow();
+  });
+});
+
 describe("adapter", () => {
   test("accepts every adapter kind", () => {
     expect(parse({ adapter: "passthrough" }).upstreams[0]!.adapter).toBe("passthrough");

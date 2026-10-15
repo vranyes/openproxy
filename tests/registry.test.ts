@@ -282,6 +282,40 @@ describe("capabilities", () => {
   });
 });
 
+// --- cost --------------------------------------------------------------------
+
+describe("cost", () => {
+  const openai = () => upstream({ id: "openai", package: "@opencode/ai/providers/openai/responses", baseURL: "https://api.openai.com/v1" });
+
+  test("resolved from models.dev when absent explicitly", () => {
+    const { resolve } = resolverWith();
+    const r = resolve(openai(), model("gpt-5-mini"));
+    expect(r.cost).toEqual({ input: 0.25, output: 2, cacheRead: 0.025 });
+    expect(r.costSource).toBe("modelsdev");
+  });
+
+  test("an explicit cost wins", () => {
+    const { resolve } = resolverWith();
+    const r = resolve(openai(), model("gpt-5-mini", { cost: { input: 1, output: 3 } }));
+    expect(r.cost).toEqual({ input: 1, output: 3 });
+    expect(r.costSource).toBe("explicit");
+  });
+
+  test("absent everywhere is null/none", () => {
+    const { resolve } = resolverWith();
+    const r = resolve(upstream({ id: "none", baseURL: "http://local.test/v1" }), model("unknown-xyz"));
+    expect(r.cost).toBeNull();
+    expect(r.costSource).toBe("none");
+  });
+
+  test("an explicit cost survives even when models.dev is disabled", () => {
+    const { resolve } = resolverWith();
+    const r = resolve(openai(), model("gpt-5-mini", { modelsDev: false, cost: { input: 1 } }));
+    expect(r.cost).toEqual({ input: 1 });
+    expect(r.costSource).toBe("explicit");
+  });
+});
+
 // --- disable -----------------------------------------------------------------
 
 describe("modelsDev:false disables resolution", () => {

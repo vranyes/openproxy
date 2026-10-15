@@ -184,6 +184,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         model: resolved.model,
         body,
         signal: req.signal,
+        cost: resolved.cost,
       });
       ctx.completed = result.completed ?? null;
       return result.response;
@@ -221,7 +222,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         safeLog(logger, { level: "info", msg: "generation", request_id: requestId, model: ctx.model, upstream: ctx.upstream,
           tokens_in: meta.usage?.tokensIn ?? null, tokens_out: meta.usage?.tokensOut ?? null,
           tokens_total: meta.usage?.tokensTotal ?? null, context_ratio: meta.contextRatio,
-          finish_reason: meta.finishReason });
+          finish_reason: meta.finishReason, cost_usd: meta.costUsd ?? null });
       }).catch(() => {});
     }
     return res;

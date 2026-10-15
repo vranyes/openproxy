@@ -16,7 +16,8 @@ import type {
   Usage,
 } from "@opencode/ai";
 import type { GatewayModel } from "../config";
-import type { AdapterMeta } from "./types";
+import { costUsd, type ModelCost } from "../cost";
+import type { AdapterMeta, TokenUsage } from "./types";
 
 // ---------------------------------------------------------------------------
 // OpenAI body -> LLM IR
@@ -314,8 +315,16 @@ export type MetaSource = LLMResponse | Usage | { usage?: Usage | null; finishRea
  * Derive the `generation` log metrics. `contextTokens` (the effective input size
  * of the final iteration) is preferred over billed `inputTokens` when present;
  * every field is read defensively and defaults to null rather than 0.
+ *
+ * `cost` is the resolved pricing (USD per 1e6 tokens). When supplied and the
+ * usage is sufficient, `costUsd` carries the estimate for the request; an
+ * unknown price for any billed category yields null (never a guess).
  */
-export function metaOf(source: MetaSource | null | undefined, model: GatewayModel): AdapterMeta {
+export function metaOf(
+  source: MetaSource | null | undefined,
+  model: GatewayModel,
+  cost?: ModelCost | null,
+): AdapterMeta {
   const withUsage = source as { usage?: Usage | null } | null | undefined;
   const usage = (withUsage?.usage ?? (source as Usage | null | undefined)) ?? undefined;
   const finishReason =
@@ -324,10 +333,37 @@ export function metaOf(source: MetaSource | null | undefined, model: GatewayMode
   const tokensOut = usage?.outputTokens ?? null;
   const tokensTotal = usage?.totalTokens ?? null;
   const contextRatio = tokensIn !== null && model.context !== undefined ? tokensIn / model.context : null;
+
+  // Cache counts are surfaced only when the provider reported them, so a source
+  // without cache metrics keeps the exact three-field `usage` shape.
+  const cacheReadTokens = usage?.cacheReadInputTokens ?? null;
+  const cacheWriteTokens = usage?.cacheWriteInputTokens ?? null;
+
+  let usageOut: TokenUsage | null = null;
+  if (tokensIn !== null || tokensOut !== null || tokensTotal !== null) {
+    usageOut = { tokensIn, tokensOut, tokensTotal };
+    if (cacheReadTokens !== null) usageOut.cacheReadTokens = cacheReadTokens;
+    if (cacheWriteTokens !== null) usageOut.cacheWriteTokens = cacheWriteTokens;
+  }
+
+  // Billed (non-cached) input: prefer the provider's breakdown; otherwise
+  // subtract cached portions from the inclusive input total, clamped at zero.
+  const nonCachedInputTokens =
+    usage?.nonCachedInputTokens ??
+    (usage?.inputTokens != null
+      ? Math.max(0, usage.inputTokens - (cacheReadTokens ?? 0) - (cacheWriteTokens ?? 0))
+      : null);
+
+  const costUsdValue = costUsd(
+    { nonCachedInputTokens, outputTokens: tokensOut, cacheReadTokens, cacheWriteTokens },
+    cost,
+  );
+
   return {
-    usage: tokensIn === null && tokensOut === null && tokensTotal === null ? null : { tokensIn, tokensOut, tokensTotal },
+    usage: usageOut,
     contextRatio,
     finishReason,
+    costUsd: costUsdValue,
   };
 }
 

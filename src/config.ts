@@ -38,6 +38,17 @@ export const ModelsDevRefSchema = z.object({
 });
 export const ModelsDevOverrideSchema = z.union([ModelsDevRefSchema, z.literal(false)]);
 
+// F7b: models.dev-convention cost accounting, USD per 1,000,000 tokens. Purely
+// optional; when set it overrides models.dev pricing for the model (mirrors the
+// context/maxOutput precedence).
+export const ModelCostSchema = z.object({
+  input: z.number().nonnegative().optional(),
+  output: z.number().nonnegative().optional(),
+  cacheRead: z.number().nonnegative().optional(),
+  cacheWrite: z.number().nonnegative().optional(),
+}); // USD per 1,000,000 tokens (models.dev convention)
+export type ModelCostConfig = z.infer<typeof ModelCostSchema>;
+
 export const ModelSchema = z
   .object({
     id: z.string(),
@@ -70,6 +81,8 @@ export const ModelSchema = z
       .describe("Request-body parameter names removed before forwarding upstream (e.g. stop, user)."),
     // models.dev pin / opt-out for this model.
     modelsDev: ModelsDevOverrideSchema.optional(),
+    // F7b: explicit pricing override. When set, wins over models.dev pricing.
+    cost: ModelCostSchema.optional(),
   })
   .superRefine((m, ctx) => {
     if (m.context !== undefined && m.maxOutput !== undefined && m.maxOutput > m.context) {

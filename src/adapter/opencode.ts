@@ -9,6 +9,7 @@
 // pre-stream context overflow.
 import type { LLMEvent, Usage } from "@opencode/ai";
 import type { GatewayModel } from "../config";
+import type { ModelCost } from "../cost";
 import { errorResponse } from "../ops/errors";
 import { aiErrorResponse } from "./ai-error";
 import type { AdapterDeps } from "./index";
@@ -149,6 +150,7 @@ function emit(
 interface StreamCtx {
   meta: ChunkMeta;
   model: GatewayModel;
+  cost?: ModelCost | null;
   resolveCompleted: (meta: AdapterMeta | null) => void;
 }
 
@@ -199,7 +201,7 @@ function sseStream(
         safeClose(controller);
         await iterator.return?.().catch(() => {});
         ctx.resolveCompleted(
-          metaOf({ usage: state.usage, finishReason: { normalized: state.finishReason } }, ctx.model),
+          metaOf({ usage: state.usage, finishReason: { normalized: state.finishReason } }, ctx.model, ctx.cost),
         );
       }
     },
@@ -213,7 +215,7 @@ function sseStream(
 
 export function createOpenCodeAdapter(deps: AdapterDeps): Adapter {
   return {
-    async handle({ upstream, model, body, signal }: AdapterInput): Promise<AdapterResult> {
+    async handle({ upstream, model, body, signal, cost }: AdapterInput): Promise<AdapterResult> {
       // 1. Strip per-model unsupported params from a shallow copy.
       const stripped: Record<string, unknown> = { ...body };
       for (const key of model.dropParams ?? []) delete stripped[key];
@@ -237,7 +239,7 @@ export function createOpenCodeAdapter(deps: AdapterDeps): Adapter {
           const result = await deps.ai.generate(m, input, { signal });
           return {
             response: Response.json(responseFromIR(result, inboundId)),
-            completed: Promise.resolve(metaOf(result, model)),
+            completed: Promise.resolve(metaOf(result, model, cost)),
           };
         } catch (err) {
           return { response: aiErrorResponse(err, model) };
@@ -257,7 +259,7 @@ export function createOpenCodeAdapter(deps: AdapterDeps): Adapter {
       const completed = new Promise<AdapterMeta | null>((resolve) => {
         resolveCompleted = resolve;
       });
-      const stream = sseStream(first, iterator, { meta: chunkMeta(inboundId), model, resolveCompleted });
+      const stream = sseStream(first, iterator, { meta: chunkMeta(inboundId), model, cost, resolveCompleted });
       return {
         response: new Response(stream, {
           headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
