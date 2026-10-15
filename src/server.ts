@@ -13,6 +13,7 @@ import { createModelResolver, tokenConfigOf, type ResolvedModel } from "./regist
 import type { ModelsDevIndex } from "./modelsdev";
 import { errorResponse } from "./ops/errors";
 import { authToken, isAuthorized, resolveAuth, unauthorizedResponse } from "./ops/auth";
+import { createRateLimiter } from "./ops/ratelimit";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
 
 export type UpstreamFetcher = (url: string, init: RequestInit) => Promise<Response>;
@@ -23,6 +24,8 @@ export interface AppOptions {
   ai?: AiRuntime;
   /** models.dev index getter (F6). Omit to disable models.dev resolution. */
   modelsdev?: () => ModelsDevIndex | null;
+  /** Clock seam (F7c) for deterministic rate-limit tests. Defaults to Date.now. */
+  now?: () => number;
 }
 
 interface Route {
@@ -59,6 +62,9 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
   const fetchUpstream: UpstreamFetcher = opts.fetchUpstream ?? ((url, init) => globalThis.fetch(url, init));
   const getConfig: ConfigProvider = typeof config === "function" ? config : () => config;
   const logger = opts.logger ?? noopLogger;
+  // F7c: single limiter for the process; reads the live config so a reload is
+  // picked up, memoizing buckets per scope:id:rpm:burst.
+  const limiter = createRateLimiter({ now: opts.now ?? (() => Date.now()), config: () => getConfig() });
   // F6: pure resolver over an injected index. A store is never constructed here.
   const resolver = createModelResolver(opts.modelsdev ?? (() => null), { logger });
 
@@ -66,6 +72,16 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     model: string | null;
     upstream: string | null;
     completed?: Promise<AdapterMeta | null> | null;
+  }
+
+  /** null when the request may proceed; a 429 envelope when a bucket denies it. */
+  function rateLimitResponse(upstreamId: string | null): Response | null {
+    const v = limiter.check(upstreamId);
+    if (v.ok) return null;
+    return errorResponse("Rate limit exceeded", 429, "invalid_request_error", {
+      code: "rate_limit_exceeded",
+      headers: { "retry-after": String(Math.max(1, Math.ceil(v.retryAfterMs / 1000))) },
+    });
   }
 
   async function handle(req: Request, ctx: LogContext): Promise<Response> {
@@ -168,6 +184,11 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       }
       ctx.model = requested;
       ctx.upstream = route.upstream.id;
+      // F7c: apply the global and/or per-upstream bucket right after the route
+      // resolves (and after the auth gate), inside the logged path so a 429
+      // emits exactly one `request` event.
+      const limited = rateLimitResponse(route.upstream.id);
+      if (limited) return limited;
       const kind = selectAdapter(route.upstream);
       if (kind === "passthrough" && NON_CHAT_NATIVE_PACKAGES.has(route.upstream.package)) {
         safeLog(logger, {

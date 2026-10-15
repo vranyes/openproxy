@@ -242,3 +242,39 @@ describe("auth config", () => {
     expect(parse().auth).toBeUndefined();
   });
 });
+
+describe("rateLimit config", () => {
+  test("requires rpm", () => {
+    expect(() => parse({ rateLimit: {} })).toThrow();
+  });
+
+  test("rejects rpm that is zero, negative, or fractional", () => {
+    expect(() => parse({ rateLimit: { rpm: 0 } })).toThrow();
+    expect(() => parse({ rateLimit: { rpm: -1 } })).toThrow();
+    expect(() => parse({ rateLimit: { rpm: 1.5 } })).toThrow();
+  });
+
+  test("burst is optional", () => {
+    expect(parse({ rateLimit: { rpm: 10 } }).upstreams[0]!.rateLimit).toEqual({ rpm: 10 });
+  });
+
+  test("rejects an invalid burst", () => {
+    expect(() => parse({ rateLimit: { rpm: 10, burst: 0 } })).toThrow();
+    expect(() => parse({ rateLimit: { rpm: 10, burst: 2.5 } })).toThrow();
+  });
+
+  test("parses top-level and per-upstream", () => {
+    const cfg = GatewayConfigSchema.parse({
+      upstreams: [baseUpstream({ rateLimit: { rpm: 3, burst: 5 } })],
+      rateLimit: { rpm: 100 },
+    });
+    expect(cfg.rateLimit).toEqual({ rpm: 100 });
+    expect(cfg.upstreams[0]!.rateLimit).toEqual({ rpm: 3, burst: 5 });
+  });
+
+  test("is optional at both levels", () => {
+    const cfg = parse();
+    expect(cfg.rateLimit).toBeUndefined();
+    expect(cfg.upstreams[0]!.rateLimit).toBeUndefined();
+  });
+});

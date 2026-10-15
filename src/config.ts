@@ -90,6 +90,15 @@ export const ModelSchema = z
     }
   });
 
+// F7c: optional token-bucket rate limiting, global and/or per-upstream. `rpm`
+// is the sustained refill rate; `burst` (default = rpm) is the bucket capacity.
+// Both are positive integers. Off unless configured.
+export const RateLimitSchema = z.object({
+  rpm: z.number().int().positive(),
+  burst: z.number().int().positive().optional(), // default = rpm
+});
+export type RateLimitConfig = z.infer<typeof RateLimitSchema>;
+
 export const UpstreamSchema = z.object({
   id: z.string(),
   package: ProviderPackageSchema,
@@ -103,6 +112,8 @@ export const UpstreamSchema = z.object({
   adapter: AdapterKindSchema.optional(),
   // models.dev pin / opt-out for every model on this upstream.
   modelsDev: ModelsDevOverrideSchema.optional(),
+  // F7c: per-upstream token bucket. Off when omitted.
+  rateLimit: RateLimitSchema.optional(),
   models: z.array(ModelSchema).min(1),
 });
 
@@ -130,6 +141,9 @@ export const GatewayConfigSchema = z.object({
   upstreams: z.array(UpstreamSchema).min(1),
   librechat: LibreChatSchema.optional(),
   auth: AuthSchema.optional(),
+  // F7c: global token bucket applied to every request, in addition to any
+  // per-upstream bucket. Off when omitted.
+  rateLimit: RateLimitSchema.optional(),
 });
 
 export type GatewayModel = z.infer<typeof ModelSchema>;
