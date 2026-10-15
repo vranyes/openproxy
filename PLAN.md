@@ -8,7 +8,7 @@ Build a LiteLLM-like gateway **specifically for LibreChat**, backed by OpenCode'
   (`GET /v1/models`, `POST /v1/chat/completions` with SSE streaming).
 - **Outbound (gateway → upstreams):** whatever each upstream needs
   (Responses / Messages / Chat Completions) via OpenCode provider packages.
-- **No client auth** for now (gateway holds all upstream keys). Design room for auth later.
+- **Client auth is optional**: open by default (gateway holds all upstream keys); set `auth.token` to require a bearer token on data routes.
 - **Context lengths:** gateway is source of truth; LibreChat is informed via generated `tokenConfig`.
 
 ## 1. Why this shape
@@ -159,15 +159,22 @@ Notes:
 | `GET` | `/librechat.yaml.fragment` | paste-ready LibreChat stanza (M2+) |
 | `POST` | `/v1/responses` | optional Responses in/out (M3, for OpenCode compat) |
 
-Future auth (no-op now): accept `Authorization: Bearer …` if configured, else allow `dummy`/empty; log a warning when unauthenticated mode is on.
+Client auth is **open by default** (with a one-time startup warning). When `auth.token`
+(or `auth.tokenEnv`) is configured, data routes require a constant-time-checked
+`Authorization: Bearer <token>` (configurable `header`/`scheme`); `/healthz` stays
+public. Rate limiting (`rateLimit: {rpm, burst?}`, global and/or per-upstream) is
+optional and off by default.
 
 ## 7. Milestones
 
-- **M0 scaffold:** repo, `gateway.yaml` schema (zod), config loader + hot-reload, `/healthz`, logging skeleton, CI (typecheck/lint/test), Dockerfile.
-- **M1 facade + 1 upstream:** `GET /v1/models`, `POST /v1/chat/completions` (non-stream + SSE) via `openai-compatible` package against Ollama/LM Studio; `GET /librechat/tokenConfig`; context enforcement (`400 context_length_exceeded`); e2e vs LibreChat `fetch: true`.
-- **M2 adapters:** `anthropic` + `openai/responses` packages; vision + tool-call e2e (LibreChat agents); per-model `dropParams`; `/librechat.yaml.fragment`; metrics (latency/tokens/context_ratio).
-- **M3 optional:** `POST /v1/responses` in/out (Open Responses spec compat); gitops deploy (`gitops/apps/openproxy` + ingress); load/refresh `models.dev` snapshot nightly.
-- **M4 hardening:** auth hook (plug-in point), rate limits, per-model cost accounting from models.dev pricing, docs + examples.
+Status: **M0–M2 and M4 landed; M3 landed except gitops deploy** (deferred — no
+cluster/registry target). See `README.md` for the current feature set.
+
+- **M0 scaffold:** ✅ zod config schema, config loader + hot-reload, `/healthz`, structured logging, `tsconfig` + `bun run typecheck`, CI workflow, multi-stage Dockerfile.
+- **M1 facade:** ✅ `GET /v1/models` (+ opt-in `discover`), `POST /v1/chat/completions` (non-stream + SSE), `GET /librechat/tokenConfig`, reactive `400 context_length_exceeded` (no pre-flight token counting, mirroring OpenCode).
+- **M2 adapters:** ✅ vendor-agnostic `src/adapter/` translating through `@opencode/ai` for all provider packages; vision + tool-call + streaming; per-model `dropParams`/`supportsVision`/`supportsTools`; `/librechat.yaml.fragment`; latency/tokens/context_ratio log event.
+- **M3:** ✅ `POST /v1/responses` inbound (non-stream + SSE); ✅ models.dev snapshot sync (fetch + cache + atomic refresh); ⛔ gitops deploy (`gitops/apps/openproxy` + ingress) — not started.
+- **M4 hardening:** ✅ client auth (open by default, warn once, enforced when configured); ✅ rate limits (global + per-upstream); ✅ per-request cost accounting from models.dev pricing; ✅ docs + examples.
 
 ## 8. Test plan (per milestone)
 
