@@ -9,6 +9,7 @@ import { createAdapter, selectAdapter } from "./adapter";
 import { defaultAiRuntime, type AiRuntime } from "./adapter/ai";
 import { createResponsesAdapter } from "./adapter/responses";
 import type { AdapterMeta } from "./adapter/types";
+import { resolveUpstreamHeaders, setHeader } from "./headers";
 import { buildLibreChatFragment, fragmentResponse, type FragmentModel } from "./librechat";
 import { createModelResolver, tokenConfigOf, type ResolvedModel } from "./registry";
 import type { ModelsDevIndex } from "./modelsdev";
@@ -27,6 +28,8 @@ export interface AppOptions {
   modelsdev?: () => ModelsDevIndex | null;
   /** Clock seam (F7c) for deterministic rate-limit tests. Defaults to Date.now. */
   now?: () => number;
+  /** F8: session-id generator; default memoizes one id per upstream id. */
+  generateSessionId?: (upstreamId: string) => string;
 }
 
 interface Route {
@@ -68,6 +71,18 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
   const limiter = createRateLimiter({ now: opts.now ?? (() => Date.now()), config: () => getConfig() });
   // F6: pure resolver over an injected index. A store is never constructed here.
   const resolver = createModelResolver(opts.modelsdev ?? (() => null), { logger });
+  // F8: default session ids are stable per upstream for the process lifetime so
+  // a client that omits the session header still gets one cache-friendly id.
+  const sessionIds = new Map<string, string>();
+  const stableSessionId = (upstreamId: string): string => {
+    let id = sessionIds.get(upstreamId);
+    if (id === undefined) {
+      id = crypto.randomUUID();
+      sessionIds.set(upstreamId, id);
+    }
+    return id;
+  };
+  const generateSessionId = opts.generateSessionId ?? stableSessionId;
 
   interface LogContext {
     model: string | null;
@@ -94,7 +109,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     req: Request,
     config: GatewayConfig,
     ctx: LogContext,
-  ): Promise<{ route: Route; body: Record<string, unknown> } | Response> {
+  ): Promise<{ route: Route; upstream: GatewayUpstream; body: Record<string, unknown> } | Response> {
     let body: Record<string, unknown>;
     try {
       body = (await req.json()) as Record<string, unknown>;
@@ -113,7 +128,13 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     // emits exactly one `request` event.
     const limited = rateLimitResponse(route.upstream.id);
     if (limited) return limited;
-    return { route, body };
+    // F8: enrich the route's upstream with the resolved headers so both the
+    // passthrough and opencode adapters send them (auth unchanged).
+    const upstream: GatewayUpstream = {
+      ...route.upstream,
+      headers: resolveUpstreamHeaders({ upstream: route.upstream, inbound: req.headers, generateSessionId }),
+    };
+    return { route, upstream, body };
   }
 
   async function handle(req: Request, ctx: LogContext): Promise<Response> {
@@ -145,9 +166,11 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       for (const u of config.upstreams) {
         if (!u.discover) continue;
         try {
-          const headers: Record<string, string> = {};
+          // F8: static headers + default UA; no session (discovery is not a
+          // conversation) and apiKey auth applied last (case-collapsed).
+          const headers = resolveUpstreamHeaders({ upstream: u });
           const apiKey = resolveApiKey(u);
-          if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+          if (apiKey) setHeader(headers, "authorization", `Bearer ${apiKey}`);
           const res = await fetchUpstream(`${u.baseURL}/models`, { headers });
           if (!res.ok) continue;
           const listed = (await res.json()) as {
@@ -205,7 +228,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
       const prep = await prepareGeneration(req, config, ctx);
       if (prep instanceof Response) return prep;
-      const { route, body } = prep;
+      const { route, upstream, body } = prep;
       const kind = selectAdapter(route.upstream);
       if (kind === "passthrough" && NON_CHAT_NATIVE_PACKAGES.has(route.upstream.package)) {
         safeLog(logger, {
@@ -218,7 +241,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       const adapter = createAdapter(kind, { fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
       const resolved = resolver.resolve(route.upstream, route.model);
       const result = await adapter.handle({
-        upstream: route.upstream,
+        upstream,
         model: resolved.model,
         body,
         signal: req.signal,
@@ -233,11 +256,11 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     if (req.method === "POST" && url.pathname === "/v1/responses") {
       const prep = await prepareGeneration(req, config, ctx);
       if (prep instanceof Response) return prep;
-      const { route, body } = prep;
+      const { route, upstream, body } = prep;
       const adapter = createResponsesAdapter({ fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
       const resolved = resolver.resolve(route.upstream, route.model);
       const result = await adapter.handle({
-        upstream: route.upstream,
+        upstream,
         model: resolved.model,
         body,
         signal: req.signal,

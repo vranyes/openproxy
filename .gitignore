@@ -1,2 +1,7 @@
 node_modules/
 *.lockb
+
+# Local secrets — never commit
+.env
+.env.*
+!.env.example

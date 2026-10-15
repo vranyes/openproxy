@@ -2,15 +2,19 @@
 // F3 context-overflow classification. No translation, no metrics.
 import { resolveApiKey } from "../config";
 import { detectContextOverflow } from "../context";
+import { setHeader } from "../headers";
 import type { AdapterDeps } from "./index";
 import type { Adapter, AdapterInput, AdapterResult } from "./types";
 
 export function createPassthroughAdapter(deps: AdapterDeps): Adapter {
   return {
     async handle({ upstream, model, body }: AdapterInput): Promise<AdapterResult> {
-      const headers: Record<string, string> = { "content-type": "application/json" };
+      // F8: start from the resolved static/session headers, then force the JSON
+      // content type and let apiKey auth win (both collapse case-variant keys).
+      const headers: Record<string, string> = { ...(upstream.headers ?? {}) };
+      setHeader(headers, "content-type", "application/json"); // forced; JSON body
       const apiKey = resolveApiKey(upstream);
-      if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+      if (apiKey) setHeader(headers, "authorization", `Bearer ${apiKey}`); // auth wins; case-collapsed
       const upstreamBody = { ...body, model: model.upstream ?? model.id };
       const upstreamRes = await deps.fetchUpstream(`${upstream.baseURL}/chat/completions`, {
         method: "POST",

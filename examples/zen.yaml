@@ -1,20 +1,27 @@
-# Gateway config for the live opencode zen endpoint.
-# Model list: GET https://opencode.ai/zen/go/v1/models (public, no key needed).
+# Gateway config for the documented opencode Go endpoint.
+# Model list: GET https://opencode.ai/inference/go/v1/models (public, no key needed).
 # Chat completions require a key: export ZEN_API_KEY=...
 #
-# The contexts below are EXPLICIT on purpose: this upstream is NOT resolvable
-# from models.dev. There is no `zen` provider; `ZEN_API_KEY` matches no
-# provider's `env`; zen's `/v1/models` carries no context metadata; and the
-# models themselves (`glm-5.2`, `deepseek-v4-pro`) exist in BOTH the `opencode`
-# and `opencode-go` providers, so name-based lookup is ambiguous and resolves to
-# nothing. Keep `context` (and, where useful, `maxOutput`) here.
+# Two upstreams because the Go endpoint is dialect-split: OpenAI-shaped under
+# /openai/v1 and Anthropic-shaped under /anthropic/v1. Both are `adapter:
+# opencode` so each request is translated to the matching wire format.
+#
+# The ids MUST stay disjoint: routing is first-wins over `upstreams` in order
+# (findModel stops at the first match), so a shared id on the Anthropic half
+# would never be reachable. `discover` is off on purpose — the /v1/models list
+# lives on the OpenAI half only, and the Anthropic half has no such endpoint.
+#
+# The contexts below are EXPLICIT: these models resolve to nothing in models.dev
+# (the `opencode-go` provider has no matching env/host for this deployment
+# shape), so the gateway must be told the window. Keep `context` (and, where
+# useful, `maxOutput`) here.
 upstreams:
-  - id: zen
+  - id: opencode-go
     package: "@opencode/ai/providers/openai-compatible"
-    baseURL: https://opencode.ai/zen/go/v1
+    baseURL: https://opencode.ai/inference/go/openai/v1
     apiKeyEnv: ZEN_API_KEY
-    adapter: openai-compatible
-    discover: true
+    adapter: opencode
+    sessionHeader: x-opencode-session
     models:
       - id: glm-5.2
         context: 1000000
@@ -22,3 +29,14 @@ upstreams:
       - id: deepseek-v4-pro
         context: 1000000
         maxOutput: 384000
+
+  - id: opencode-go-anthropic
+    package: "@opencode/ai/providers/anthropic-compatible"
+    baseURL: https://opencode.ai/inference/go/anthropic/v1
+    apiKeyEnv: ZEN_API_KEY
+    adapter: opencode
+    sessionHeader: x-opencode-session
+    models:
+      - id: claude-haiku-5-5
+        context: 1000000
+        maxOutput: 128000

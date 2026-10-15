@@ -99,6 +99,22 @@ export const RateLimitSchema = z.object({
 });
 export type RateLimitConfig = z.infer<typeof RateLimitSchema>;
 
+// F8: RFC 7230 header token (name) and a value charset of visible ASCII +
+// obs-text only — CR/LF/NUL and other controls are rejected, so a configured
+// header can never inject into the request line.
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const HEADER_VALUE_RE = /^[\x20-\x7e\x80-\xff]*$/;
+// F8: a session id is an opaque correlation token, never a credential; these
+// names are refused so `sessionHeader` cannot be pointed at auth material.
+const FORBIDDEN_SESSION_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "x-api-key"]);
+
+export const HeadersSchema = z.record(z.string(), z.string()).superRefine((headers, ctx) => {
+  for (const [name, value] of Object.entries(headers)) {
+    if (!HEADER_NAME_RE.test(name)) ctx.addIssue({ code: "custom", message: `invalid HTTP header name: ${name}` });
+    if (!HEADER_VALUE_RE.test(value)) ctx.addIssue({ code: "custom", message: `invalid HTTP header value for ${name}` });
+  }
+});
+
 export const UpstreamSchema = z.object({
   id: z.string(),
   package: ProviderPackageSchema,
@@ -114,6 +130,15 @@ export const UpstreamSchema = z.object({
   modelsDev: ModelsDevOverrideSchema.optional(),
   // F7c: per-upstream token bucket. Off when omitted.
   rateLimit: RateLimitSchema.optional(),
+  // F8: static headers sent on every upstream request (validated name/value).
+  headers: HeadersSchema.optional(),
+  // F8: header carrying an opaque per-conversation id; forwarded when inbound,
+  // else generated (memoized per upstream) or left to a static `headers` value.
+  sessionHeader: z
+    .string()
+    .regex(HEADER_NAME_RE, "sessionHeader must be a valid HTTP header name")
+    .refine((n) => !FORBIDDEN_SESSION_HEADERS.has(n.toLowerCase()), "sessionHeader must not be a credential header")
+    .optional(),
   models: z.array(ModelSchema).min(1),
 });
 

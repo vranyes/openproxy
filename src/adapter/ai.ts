@@ -17,12 +17,18 @@ import type { LanguageModel, LLM, LLMEvent, LLMResponse } from "@opencode/ai";
 import { resolveApiKey, type GatewayModel, type GatewayUpstream } from "../config";
 
 type Model = LanguageModel;
-type ProviderSettings = { baseURL: string; apiKey: string } | { baseURL: string; auth: Auth.Definition };
+type ProviderSettings = ({ baseURL: string; apiKey: string } | { baseURL: string; auth: Auth.Definition }) & {
+  headers?: Record<string, string>;
+};
 
 /** Auth-aware settings shared by every provider package's `configure`. */
 function settingsOf(u: GatewayUpstream): ProviderSettings {
   const apiKey = resolveApiKey(u);
-  return apiKey ? { baseURL: u.baseURL, apiKey } : { baseURL: u.baseURL, auth: Auth.none };
+  const base = apiKey ? { baseURL: u.baseURL, apiKey } : { baseURL: u.baseURL, auth: Auth.none };
+  // F8: pass static/session headers only when present. (Callers enrich the
+  // upstream with a default user-agent first, so in the server path this is
+  // effectively always true; the guard matters for direct modelFor calls.)
+  return u.headers && Object.keys(u.headers).length > 0 ? { ...base, headers: u.headers } : base;
 }
 
 /** Build the provider-native language model for an upstream, dispatching by `package`. */

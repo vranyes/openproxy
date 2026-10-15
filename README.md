@@ -8,7 +8,7 @@ LibreChat speaks one dialect — `POST /v1/chat/completions` (+ `GET /v1/models`
 
 ```sh
 bun install
-export ZEN_API_KEY=...              # key for https://opencode.ai/zen/go/v1
+export ZEN_API_KEY=...              # key for https://opencode.ai/inference/go/v1
 SSL_CERT_FILE=/opt/homebrew/etc/openssl@3/cert.pem \  # only if Bun reports TLS issuer errors on macOS
   bun src/index.ts examples/zen.yaml
 ```
@@ -48,6 +48,32 @@ When a model resolves from models.dev, the resolved **context** feeds
 (`max_context`). `maxOutput` is resolved from `limit.output` (dropped when it
 exceeds the context) but has no runtime effect yet. The gateway never mutates the
 parsed config.
+
+## Upstream headers & sessions
+
+Every upstream request carries a distinct `user-agent: openproxy/<version>` (not
+whatever the client sent), which can be overridden per upstream:
+
+```yaml
+upstreams:
+  - id: zai
+    headers:
+      x-tenant: acme            # static headers on every request to this upstream
+      User-Agent: my-client/1   # replaces the openproxy default
+    sessionHeader: x-opencode-session   # opaque per-conversation id
+```
+
+`headers` names must be valid HTTP tokens and values printable ASCII (no CR/LF),
+or the config is rejected. `sessionHeader` names a header the gateway populates
+with an opaque conversation id: an inbound value is forwarded when it is a safe
+non-empty string, otherwise the gateway generates one (stable per upstream for
+the process lifetime). The name may not be a credential header —
+`authorization`, `proxy-authorization`, `cookie`, or `x-api-key` are refused, so
+a client's auth is never turned into a session id and never leaks upstream.
+
+Authentication precedence: when the upstream has an `apiKey` (or `apiKeyEnv`),
+that key's auth header always wins over any static `headers` value. A keyless
+upstream (`apiKeyEnv: null`) instead forwards static auth headers verbatim.
 
 ## Wire up LibreChat
 
@@ -102,7 +128,7 @@ with `context_length: null` and left out of `tokenConfig`.
 
 ```sh
 bun test                                    # unit + fake-upstream tests
-OPENPROXY_LIVE_TEST=1 bun test              # plus live check vs opencode.ai/zen
+OPENPROXY_LIVE_TEST=1 bun test              # plus a live check vs opencode.ai/inference/go
 ```
 
 ## Status
