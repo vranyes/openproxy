@@ -5,6 +5,7 @@ import {
   type GatewayModel,
   type GatewayUpstream,
 } from "./config";
+import { detectContextOverflow } from "./context";
 import { errorResponse } from "./ops/errors";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
 
@@ -102,11 +103,17 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       const apiKey = resolveApiKey(route.upstream);
       if (apiKey) headers.authorization = `Bearer ${apiKey}`;
       const upstreamBody = { ...body, model: route.model.upstream ?? route.model.id };
-      return fetchUpstream(`${route.upstream.baseURL}/chat/completions`, {
+      const upstreamRes = await fetchUpstream(`${route.upstream.baseURL}/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify(upstreamBody),
       });
+      // F3: classify context-overflow rejections into a clean 400. Only non-ok,
+      // client-scoped (4xx) responses are inspected, under a byte cap and timeout;
+      // successful (possibly SSE) bodies are never read.
+      const overflow = await detectContextOverflow(upstreamRes, route.model);
+      if (overflow) return overflow;
+      return upstreamRes;
     }
 
     return errorResponse("not found", 404);
