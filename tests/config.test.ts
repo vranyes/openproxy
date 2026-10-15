@@ -92,8 +92,9 @@ describe("dropParams", () => {
 });
 
 describe("adapter", () => {
-  test("accepts both adapter kinds", () => {
+  test("accepts every adapter kind", () => {
     expect(parse({ adapter: "passthrough" }).upstreams[0]!.adapter).toBe("passthrough");
+    expect(parse({ adapter: "opencode" }).upstreams[0]!.adapter).toBe("opencode");
     expect(parse({ adapter: "openai-compatible" }).upstreams[0]!.adapter).toBe("openai-compatible");
   });
 
@@ -105,15 +106,11 @@ describe("adapter", () => {
     expect(() => parse({ adapter: "other" })).toThrow(/adapter must be/);
   });
 
-  test("rejects openai-compatible on a non-compatible package", () => {
-    expect(() =>
-      parse({ package: "@opencode/ai/providers/openai/responses", adapter: "openai-compatible" }),
-    ).toThrow(/openai-compatible/);
-  });
-
-  test("allows adapterless non-compatible packages", () => {
-    const cfg = parse({ package: "@opencode/ai/providers/anthropic" });
-    expect(cfg.upstreams[0]!.adapter).toBeUndefined();
+  test("opencode and its deprecated alias both parse on any package", () => {
+    for (const pkg of KNOWN_PROVIDER_PACKAGES) {
+      expect(parse({ package: pkg, adapter: "opencode" }).upstreams[0]!.adapter).toBe("opencode");
+      expect(parse({ package: pkg, adapter: "openai-compatible" }).upstreams[0]!.adapter).toBe("openai-compatible");
+    }
   });
 });
 

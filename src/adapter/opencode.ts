@@ -1,10 +1,12 @@
 // Opt-in adapter: translate OpenAI Chat Completions <-> @opencode/ai LLM IR.
 //
-// The runtime always requests an upstream SSE stream (that is the package's
-// protocol), so a client non-stream request is reassembled from the stream, and
-// a client stream request is re-emitted frame by frame. Everything that can
-// fail BEFORE the first upstream byte is turned into an HTTP error, preserving
-// F3's clean 400 for pre-stream context overflow.
+// `createOpenCodeAdapter` is provider-agnostic: the concrete dialect is chosen
+// by `deps.ai.model` from the upstream's `package` (F5). The runtime always
+// requests an upstream SSE stream (that is the package's protocol), so a client
+// non-stream request is reassembled from the stream, and a client stream request
+// is re-emitted frame by frame. Everything that can fail BEFORE the first
+// upstream byte is turned into an HTTP error, preserving F3's clean 400 for
+// pre-stream context overflow.
 import type { LLMEvent, Usage } from "@opencode/ai";
 import type { GatewayModel } from "../config";
 import { errorResponse } from "../ops/errors";
@@ -209,7 +211,7 @@ function sseStream(
   });
 }
 
-export function createOpenAiCompatibleAdapter(deps: AdapterDeps): Adapter {
+export function createOpenCodeAdapter(deps: AdapterDeps): Adapter {
   return {
     async handle({ upstream, model, body, signal }: AdapterInput): Promise<AdapterResult> {
       // 1. Strip per-model unsupported params from a shallow copy.

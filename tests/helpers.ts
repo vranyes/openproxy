@@ -13,11 +13,24 @@ export type ChatCompletionResponse = { choices: Array<{ message: unknown }> };
  * already ends in `/v1`, matching what `OpenAICompatible.configure` expects.
  */
 export function fakeUpstreamServer(handler: (req: Request) => Response | Promise<Response>): { url: string; stop: () => void } {
-  const server = Bun.serve({ port: 0, fetch: handler });
+  // Bind loopback explicitly and retry on collision: `port: 0` on the wildcard
+  // address can be assigned an ephemeral port that a host loopback service already
+  // holds on 127.0.0.1, so requests would reach that service instead of the fake.
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20 && !server; attempt++) {
+    try {
+      server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler });
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  if (!server) throw lastError ?? new Error("could not bind fake upstream server");
+  const started = server;
   return {
-    url: `http://127.0.0.1:${server.port}/v1`,
+    url: `http://127.0.0.1:${started.port}/v1`,
     stop: () => {
-      server.stop(true);
+      started.stop(true);
     },
   };
 }

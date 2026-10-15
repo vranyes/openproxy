@@ -17,21 +17,30 @@ describe("selectAdapter", () => {
     expect(selectAdapter(upstream())).toBe("passthrough");
   });
 
-  test("an explicit adapter wins", () => {
-    expect(selectAdapter(upstream({ adapter: "openai-compatible" }))).toBe("openai-compatible");
+  test("an explicit passthrough wins", () => {
     expect(selectAdapter(upstream({ adapter: "passthrough" }))).toBe("passthrough");
+  });
+
+  test("adapter opencode selects the opencode adapter", () => {
+    expect(selectAdapter(upstream({ adapter: "opencode" }))).toBe("opencode");
+  });
+
+  test("the deprecated openai-compatible alias canonicalizes to opencode", () => {
+    expect(selectAdapter(upstream({ adapter: "openai-compatible" }))).toBe("opencode");
   });
 });
 
-describe("adapter config refinement", () => {
-  test("rejects openai-compatible on a non-compatible package", () => {
-    expect(() => upstream({ package: "@opencode/ai/providers/openai/responses", adapter: "openai-compatible" })).toThrow(
-      /openai-compatible/,
-    );
+describe("adapter config", () => {
+  test("the openai-compatible alias is accepted on any translated package", () => {
+    const u = upstream({ package: "@opencode/ai/providers/openai/responses", adapter: "openai-compatible" });
+    expect(u.adapter).toBe("openai-compatible");
+    expect(selectAdapter(u)).toBe("opencode");
   });
 
-  test("allows openai-compatible on the openai-compatible package", () => {
-    expect(upstream({ adapter: "openai-compatible" }).adapter).toBe("openai-compatible");
+  test("adapter opencode is accepted on openai/responses", () => {
+    const u = upstream({ package: "@opencode/ai/providers/openai/responses", adapter: "opencode" });
+    expect(u.adapter).toBe("opencode");
+    expect(selectAdapter(u)).toBe("opencode");
   });
 
   test("other packages parse without an adapter (and default to passthrough)", () => {

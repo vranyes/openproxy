@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { UpstreamSchema, type GatewayConfig, type GatewayModel, type GatewayUpstream } from "../src/config";
 import { createApp } from "../src/server";
 import { defaultAiRuntime } from "../src/adapter/ai";
-import { createOpenAiCompatibleAdapter } from "../src/adapter/openai-compatible";
+import { createOpenCodeAdapter } from "../src/adapter/opencode";
 import { fakeUpstreamServer } from "./helpers";
 
 const COMPAT = "@opencode/ai/providers/openai-compatible";
@@ -378,7 +378,7 @@ describe("openai-compatible adapter: errors", () => {
 describe("openai-compatible adapter: abort", () => {
   test("aborting cancels a pending generation instead of hanging", async () => {
     const upstream = upstreamOf("http://placeholder.test/v1");
-    const adapter = createOpenAiCompatibleAdapter({
+    const adapter = createOpenCodeAdapter({
       fetchUpstream: (url, init) => globalThis.fetch(url, init),
       ai: defaultAiRuntime,
     });

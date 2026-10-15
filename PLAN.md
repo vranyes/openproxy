@@ -103,6 +103,7 @@ upstreams:
     package: "@opencode/ai/providers/openai/responses"
     baseURL: https://api.openai.com/v1
     apiKeyEnv: OPENAI_API_KEY
+    adapter: opencode           # translate through @opencode/ai
     models:
       - id: gpt-5-mini            # name LibreChat sees
         upstream: gpt-5-mini      # modelID sent upstream
@@ -114,8 +115,9 @@ upstreams:
 
   - id: anthropic
     package: "@opencode/ai/providers/anthropic"
-    baseURL: https://api.anthropic.com
+    baseURL: https://api.anthropic.com/v1
     apiKeyEnv: ANTHROPIC_API_KEY
+    adapter: opencode
     models:
       - id: claude-sonnet-4-5
         context: 200000
@@ -124,6 +126,7 @@ upstreams:
     package: "@opencode/ai/providers/openai-compatible"
     baseURL: http://ollama:11434/v1
     apiKeyEnv: null               # omit env for no-auth endpoints
+    adapter: opencode
     models:
       - id: qwen3-coder-30b
         upstream: qwen3-coder:30b
@@ -131,6 +134,15 @@ upstreams:
 ```
 
 Notes:
+
+- `adapter: opencode` is the single generic adapter: it dispatches by `package`
+  to the matching `@opencode/ai` provider (anthropic, anthropic-compatible,
+  openai, openai/chat, openai/responses, openai-compatible,
+  openai-compatible/responses). `adapter: openai-compatible` remains as a
+  deprecated alias that canonicalizes to `opencode`; `passthrough` (default)
+  relays bytes unchanged.
+- Provider `baseURL`s include the version segment (e.g. `https://api.anthropic.com/v1`);
+  the packages append the endpoint path (`/messages`, `/responses`, `/chat/completions`).
 
 - Reuse `opencode.json` `providers{}` shape where possible (keyed by provider ID, `env`, `package`, `settings`, `headers`, `body`, per-model `models{}` + `limit.context`).
 - `settings` is package-specific; OpenCode does not validate package keys — pass through.

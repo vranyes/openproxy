@@ -24,6 +24,18 @@ interface Route {
   model: GatewayModel;
 }
 
+// Packages that do NOT natively speak the OpenAI chat-completions dialect. A
+// `passthrough` route to one of these is probably misconfigured (use
+// `adapter: opencode` to translate). `openai-compatible` and `openai/chat` are
+// chat-native and deliberately absent.
+const NON_CHAT_NATIVE_PACKAGES = new Set<string>([
+  "@opencode/ai/providers/anthropic",
+  "@opencode/ai/providers/anthropic-compatible",
+  "@opencode/ai/providers/openai",
+  "@opencode/ai/providers/openai/responses",
+  "@opencode/ai/providers/openai-compatible/responses",
+]);
+
 function findModel(config: GatewayConfig, id: string): Route | null {
   for (const upstream of config.upstreams) {
     const model = upstream.models.find((m) => m.id === id);
@@ -104,7 +116,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       ctx.model = requested;
       ctx.upstream = route.upstream.id;
       const kind = selectAdapter(route.upstream);
-      if (kind === "passthrough" && route.upstream.package !== "@opencode/ai/providers/openai-compatible") {
+      if (kind === "passthrough" && NON_CHAT_NATIVE_PACKAGES.has(route.upstream.package)) {
         safeLog(logger, {
           level: "warn",
           msg: "passthrough to a non-OpenAI-compatible package may be incorrect",

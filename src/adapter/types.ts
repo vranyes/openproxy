@@ -1,13 +1,14 @@
 // Vendor-agnostic adapter seam for the chat-completions hot path.
 //
 // `passthrough` relays bytes to the upstream unchanged (today's behavior + F3
-// context-overflow classification); `openai-compatible` translates the OpenAI
-// Chat Completions wire format into the @opencode/ai LLM IR and back, which
-// unlocks non-`openai-compatible` provider packages without reimplementing
-// per-vendor mapping. The adapter is OPT-IN per upstream.
+// context-overflow classification); `opencode` translates the OpenAI Chat
+// Completions wire format into the @opencode/ai LLM IR and back, dispatching the
+// provider-native protocol by the upstream's `package`. The adapter is OPT-IN
+// per upstream. `openai-compatible` is accepted as a deprecated config alias for
+// `opencode` and canonicalized in `selectAdapter`.
 import type { GatewayModel, GatewayUpstream } from "../config";
 
-export type AdapterKind = "passthrough" | "openai-compatible";
+export type AdapterKind = "passthrough" | "opencode";
 
 /** Metrics derived from one generation, for the `generation` log event. Null fields mean "unknown". */
 export interface AdapterMeta {

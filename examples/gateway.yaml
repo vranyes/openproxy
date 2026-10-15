@@ -3,6 +3,7 @@ upstreams:
     package: "@opencode/ai/providers/openai/responses"
     baseURL: https://api.openai.com/v1
     apiKeyEnv: OPENAI_API_KEY
+    adapter: opencode
     models:
       - id: gpt-5-mini
         upstream: gpt-5-mini
@@ -14,8 +15,9 @@ upstreams:
 
   - id: anthropic
     package: "@opencode/ai/providers/anthropic"
-    baseURL: https://api.anthropic.com
+    baseURL: https://api.anthropic.com/v1
     apiKeyEnv: ANTHROPIC_API_KEY
+    adapter: opencode
     models:
       - id: claude-sonnet-4-5
         context: 200000
@@ -24,7 +26,7 @@ upstreams:
     package: "@opencode/ai/providers/openai-compatible"
     baseURL: http://ollama:11434/v1
     apiKeyEnv: null
-    adapter: openai-compatible
+    adapter: opencode
     models:
       - id: qwen3-coder-30b
         upstream: qwen3-coder:30b
