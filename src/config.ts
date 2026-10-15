@@ -20,6 +20,12 @@ export const ProviderPackageSchema = z.enum(KNOWN_PROVIDER_PACKAGES, {
   }),
 });
 
+// F4: translation strategy for the chat path. `passthrough` (default) relays
+// bytes; `openai-compatible` translates through @opencode/ai.
+export const AdapterKindSchema = z.enum(["passthrough", "openai-compatible"], {
+  errorMap: () => ({ message: 'adapter must be "passthrough" or "openai-compatible"' }),
+});
+
 export const ModelSchema = z
   .object({
     id: z.string(),
@@ -57,16 +63,27 @@ export const ModelSchema = z
     }
   });
 
-export const UpstreamSchema = z.object({
-  id: z.string(),
-  package: ProviderPackageSchema,
-  baseURL: z.string().url(),
-  apiKey: z.string().optional(),
-  // Env var holding the upstream key; explicit null means "no auth" (unset, not an error).
-  apiKeyEnv: z.string().nullable().optional(),
-  discover: z.boolean().optional(),
-  models: z.array(ModelSchema).min(1),
-});
+export const UpstreamSchema = z
+  .object({
+    id: z.string(),
+    package: ProviderPackageSchema,
+    baseURL: z.string().url(),
+    apiKey: z.string().optional(),
+    // Env var holding the upstream key; explicit null means "no auth" (unset, not an error).
+    apiKeyEnv: z.string().nullable().optional(),
+    discover: z.boolean().optional(),
+    // Translation strategy; defaults to `passthrough` when omitted.
+    adapter: AdapterKindSchema.optional(),
+    models: z.array(ModelSchema).min(1),
+  })
+  .superRefine((u, ctx) => {
+    if (u.adapter === "openai-compatible" && u.package !== "@opencode/ai/providers/openai-compatible") {
+      ctx.addIssue({
+        code: "custom",
+        message: 'adapter "openai-compatible" requires package "@opencode/ai/providers/openai-compatible"',
+      });
+    }
+  });
 
 export const GatewayConfigSchema = z.object({
   upstreams: z.array(UpstreamSchema).min(1),
@@ -76,6 +93,7 @@ export type GatewayModel = z.infer<typeof ModelSchema>;
 export type GatewayUpstream = z.infer<typeof UpstreamSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
 export type ConfigProvider = () => GatewayConfig;
+export type AdapterKind = z.infer<typeof AdapterKindSchema>;
 
 export function resolveApiKey(u: GatewayUpstream): string | undefined {
   if (u.apiKey) return u.apiKey;

@@ -3,7 +3,7 @@
 // model's context window, we reshape that provider error into a clean 400 that
 // LibreChat can surface. Classification is delegated to @opencode/ai; no regexes
 // are reimplemented here.
-import { isContextOverflow } from "@opencode/ai";
+import { isContextOverflow, isContextOverflowFailure } from "@opencode/ai";
 import type { GatewayModel } from "./config";
 import { errorResponse } from "./ops/errors";
 
@@ -22,6 +22,15 @@ type ClonedResponse = ReturnType<Response["clone"]>;
 /** Thin wrapper over @opencode/ai: does this provider error text mean "input too long"? */
 export function isOverflowMessage(text: string): boolean {
   return isContextOverflow(text);
+}
+
+/**
+ * Thin wrapper over @opencode/ai: does this thrown failure (an AIError, or
+ * anything) classify as a context overflow? Used by the translated adapter path
+ * to reshape pre-stream rejections into the same clean 400 as `passthrough`.
+ */
+export function isContextOverflowFailureError(err: unknown): boolean {
+  return isContextOverflowFailure(err);
 }
 
 /** Human-readable message; LibreChat surfaces error.message. No token count is invented. */

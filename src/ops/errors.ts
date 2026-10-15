@@ -9,6 +9,8 @@ export interface ErrorResponseOptions {
   code?: string;
   /** Model context window in tokens, surfaced top-level as max_context. Omitted when unknown. */
   maxContext?: number;
+  /** Extra response headers (e.g. retry-after). Omitted when undefined. */
+  headers?: Record<string, string>;
 }
 
 export function errorResponse(
@@ -21,5 +23,5 @@ export function errorResponse(
   if (opts.code !== undefined) error.code = opts.code;
   const body: Record<string, unknown> = { error };
   if (opts.maxContext !== undefined) body.max_context = opts.maxContext;
-  return Response.json(body, { status });
+  return Response.json(body, opts.headers === undefined ? { status } : { status, headers: opts.headers });
 }

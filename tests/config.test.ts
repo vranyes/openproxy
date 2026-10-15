@@ -91,6 +91,32 @@ describe("dropParams", () => {
   });
 });
 
+describe("adapter", () => {
+  test("accepts both adapter kinds", () => {
+    expect(parse({ adapter: "passthrough" }).upstreams[0]!.adapter).toBe("passthrough");
+    expect(parse({ adapter: "openai-compatible" }).upstreams[0]!.adapter).toBe("openai-compatible");
+  });
+
+  test("absent parses to undefined", () => {
+    expect(parse().upstreams[0]!.adapter).toBeUndefined();
+  });
+
+  test("rejects an unknown adapter value", () => {
+    expect(() => parse({ adapter: "other" })).toThrow(/adapter must be/);
+  });
+
+  test("rejects openai-compatible on a non-compatible package", () => {
+    expect(() =>
+      parse({ package: "@opencode/ai/providers/openai/responses", adapter: "openai-compatible" }),
+    ).toThrow(/openai-compatible/);
+  });
+
+  test("allows adapterless non-compatible packages", () => {
+    const cfg = parse({ package: "@opencode/ai/providers/anthropic" });
+    expect(cfg.upstreams[0]!.adapter).toBeUndefined();
+  });
+});
+
 describe("example configs parse", () => {
   for (const file of ["../examples/gateway.yaml", "../examples/zen.yaml"]) {
     test(file, () => {

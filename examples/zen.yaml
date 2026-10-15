@@ -7,6 +7,7 @@ upstreams:
     package: "@opencode/ai/providers/openai-compatible"
     baseURL: https://opencode.ai/zen/go/v1
     apiKeyEnv: ZEN_API_KEY
+    adapter: openai-compatible
     discover: true
     models:
       - id: glm-5.2

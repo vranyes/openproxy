@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import type { LLMResponse } from "@opencode/ai";
 import { createApp, type UpstreamFetcher } from "../src/server";
 import type { GatewayConfig } from "../src/config";
+import type { AiRuntime } from "../src/adapter/ai";
 import { errorResponse } from "../src/ops/errors";
 import { jsonLogger, type LogEvent } from "../src/ops/log";
 import { stubUpstream } from "./helpers";
@@ -159,5 +161,98 @@ describe("errorResponse", () => {
     const server = errorResponse("boom", 500, "server_error");
     expect(server.status).toBe(500);
     expect(await server.json()).toEqual({ error: { message: "boom", type: "server_error" } });
+  });
+
+  test("passes extra headers through when supplied", () => {
+    const res = errorResponse("slow", 429, "invalid_request_error", { headers: { "retry-after": "5" } });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("5");
+  });
+});
+
+describe("generation logging", () => {
+  const adapterConfig: GatewayConfig = {
+    upstreams: [
+      {
+        id: "local",
+        package: "@opencode/ai/providers/openai-compatible",
+        baseURL: "http://upstream.test/v1",
+        apiKey: "test-key",
+        adapter: "openai-compatible",
+        models: [{ id: "qwen3-coder-30b", upstream: "qwen3-coder:30b", context: 131072, maxOutput: 32768 }],
+      },
+    ],
+  };
+
+  const fakeResponse = {
+    text: "hi",
+    reasoning: "",
+    toolCalls: [],
+    usage: { contextTokens: 12, inputTokens: 12, outputTokens: 3, totalTokens: 15 },
+    finishReason: { normalized: "stop" },
+  } as unknown as LLMResponse;
+
+  const fakeAi: AiRuntime = {
+    model: () => ({}) as never,
+    generate: async () => fakeResponse,
+    stream: () => {
+      throw new Error("stream not used");
+    },
+  };
+
+  test("passthrough emits one request event and no generation event", async () => {
+    const events: LogEvent[] = [];
+    const app = createApp(config, { fetchUpstream: okUpstream, logger: (e) => events.push(e) });
+    const res = await app.fetch(chatRequest("qwen3-coder-30b"));
+    expect(res.status).toBe(200);
+    await Bun.sleep(0);
+    expect(events.filter((e) => e.msg === "request")).toHaveLength(1);
+    expect(events.filter((e) => e.msg === "generation")).toHaveLength(0);
+  });
+
+  test("the translated adapter path emits a generation event with real metrics", async () => {
+    const events: LogEvent[] = [];
+    const app = createApp(adapterConfig, { logger: (e) => events.push(e), ai: fakeAi });
+    const res = await app.fetch(chatRequest("qwen3-coder-30b"));
+    expect(res.status).toBe(200);
+    await Bun.sleep(0);
+    expect(events.filter((e) => e.msg === "request")).toHaveLength(1);
+    const generation = events.find((e) => e.msg === "generation");
+    expect(generation).toBeDefined();
+    expect(generation).toMatchObject({
+      level: "info",
+      msg: "generation",
+      model: "qwen3-coder-30b",
+      upstream: "local",
+      tokens_in: 12,
+      tokens_out: 3,
+      tokens_total: 15,
+      finish_reason: "stop",
+    });
+    expect(generation!.context_ratio).toBeCloseTo(12 / 131072);
+  });
+
+  test("passthrough to a non-OpenAI-compatible package emits a warn event", async () => {
+    const responsesConfig: GatewayConfig = {
+      upstreams: [
+        {
+          id: "oa",
+          package: "@opencode/ai/providers/openai/responses",
+          baseURL: "http://upstream.test/v1",
+          apiKey: "test-key",
+          models: [{ id: "gpt-5-mini", context: 128000 }],
+        },
+      ],
+    };
+    const events: LogEvent[] = [];
+    const app = createApp(responsesConfig, { fetchUpstream: okUpstream, logger: (e) => events.push(e) });
+    const res = await app.fetch(chatRequest("gpt-5-mini"));
+    expect(res.status).toBe(200);
+    const warn = events.find((e) => e.level === "warn");
+    expect(warn).toMatchObject({
+      msg: "passthrough to a non-OpenAI-compatible package may be incorrect",
+      upstream: "oa",
+      package: "@opencode/ai/providers/openai/responses",
+    });
   });
 });

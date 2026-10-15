@@ -5,7 +5,9 @@ import {
   type GatewayModel,
   type GatewayUpstream,
 } from "./config";
-import { detectContextOverflow } from "./context";
+import { createAdapter, selectAdapter } from "./adapter";
+import { defaultAiRuntime, type AiRuntime } from "./adapter/ai";
+import type { AdapterMeta } from "./adapter/types";
 import { errorResponse } from "./ops/errors";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
 
@@ -14,6 +16,7 @@ export type UpstreamFetcher = (url: string, init: RequestInit) => Promise<Respon
 export interface AppOptions {
   fetchUpstream?: UpstreamFetcher;
   logger?: Logger;
+  ai?: AiRuntime;
 }
 
 interface Route {
@@ -37,6 +40,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
   interface LogContext {
     model: string | null;
     upstream: string | null;
+    completed?: Promise<AdapterMeta | null> | null;
   }
 
   async function handle(req: Request, ctx: LogContext): Promise<Response> {
@@ -99,21 +103,19 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       }
       ctx.model = requested;
       ctx.upstream = route.upstream.id;
-      const headers: Record<string, string> = { "content-type": "application/json" };
-      const apiKey = resolveApiKey(route.upstream);
-      if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-      const upstreamBody = { ...body, model: route.model.upstream ?? route.model.id };
-      const upstreamRes = await fetchUpstream(`${route.upstream.baseURL}/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(upstreamBody),
-      });
-      // F3: classify context-overflow rejections into a clean 400. Only non-ok,
-      // client-scoped (4xx) responses are inspected, under a byte cap and timeout;
-      // successful (possibly SSE) bodies are never read.
-      const overflow = await detectContextOverflow(upstreamRes, route.model);
-      if (overflow) return overflow;
-      return upstreamRes;
+      const kind = selectAdapter(route.upstream);
+      if (kind === "passthrough" && route.upstream.package !== "@opencode/ai/providers/openai-compatible") {
+        safeLog(logger, {
+          level: "warn",
+          msg: "passthrough to a non-OpenAI-compatible package may be incorrect",
+          upstream: route.upstream.id,
+          package: route.upstream.package,
+        });
+      }
+      const adapter = createAdapter(kind, { fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
+      const result = await adapter.handle({ upstream: route.upstream, model: route.model, body, signal: req.signal });
+      ctx.completed = result.completed ?? null;
+      return result.response;
     }
 
     return errorResponse("not found", 404);
@@ -140,6 +142,17 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       latency_ms: Math.round(performance.now() - started),
       // Passthrough today: bodies not parsed; usage unknown and ALWAYS null for streams. F4 fills these.
       usage: null, context_ratio: null });
+    // Translated adapter path: emit a follow-up `generation` event once the
+    // generation finishes (for SSE, after the stream drains). Never awaited.
+    if (ctx.completed) {
+      void ctx.completed.then((meta) => {
+        if (!meta) return;
+        safeLog(logger, { level: "info", msg: "generation", request_id: requestId, model: ctx.model, upstream: ctx.upstream,
+          tokens_in: meta.usage?.tokensIn ?? null, tokens_out: meta.usage?.tokensOut ?? null,
+          tokens_total: meta.usage?.tokensTotal ?? null, context_ratio: meta.contextRatio,
+          finish_reason: meta.finishReason });
+      }).catch(() => {});
+    }
     return res;
   }
 

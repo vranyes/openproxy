@@ -1,7 +1,8 @@
 // Structured, dependency-free logging. One JSON object per line.
 // createApp defaults to noopLogger (silent); src/index.ts injects jsonLogger().
-// usage/context_ratio are null today: the chat path is a passthrough (F4 fills them).
-export type LogLevel = "info" | "error";
+// The `request` event always carries usage/context_ratio as null; the translated
+// adapter path emits a follow-up `generation` event with real metrics (F4).
+export type LogLevel = "info" | "warn" | "error";
 export interface LogEvent { level: LogLevel; msg: string; [field: string]: unknown; }
 export type Logger = (event: LogEvent) => void;
 function writeStderr(line: string): void {

@@ -24,6 +24,7 @@ upstreams:
     package: "@opencode/ai/providers/openai-compatible"
     baseURL: http://ollama:11434/v1
     apiKeyEnv: null
+    adapter: openai-compatible
     models:
       - id: qwen3-coder-30b
         upstream: qwen3-coder:30b
