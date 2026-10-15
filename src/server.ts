@@ -8,6 +8,9 @@ import {
 import { createAdapter, selectAdapter } from "./adapter";
 import { defaultAiRuntime, type AiRuntime } from "./adapter/ai";
 import type { AdapterMeta } from "./adapter/types";
+import { buildLibreChatFragment, fragmentResponse, type FragmentModel } from "./librechat";
+import { createModelResolver, tokenConfigOf, type ResolvedModel } from "./registry";
+import type { ModelsDevIndex } from "./modelsdev";
 import { errorResponse } from "./ops/errors";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
 
@@ -17,6 +20,8 @@ export interface AppOptions {
   fetchUpstream?: UpstreamFetcher;
   logger?: Logger;
   ai?: AiRuntime;
+  /** models.dev index getter (F6). Omit to disable models.dev resolution. */
+  modelsdev?: () => ModelsDevIndex | null;
 }
 
 interface Route {
@@ -44,10 +49,17 @@ function findModel(config: GatewayConfig, id: string): Route | null {
   return null;
 }
 
+/** A positive-integer `context_length` from an upstream `/models` payload, else undefined. */
+function contextHint(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptions = {}) {
   const fetchUpstream: UpstreamFetcher = opts.fetchUpstream ?? ((url, init) => globalThis.fetch(url, init));
   const getConfig: ConfigProvider = typeof config === "function" ? config : () => config;
   const logger = opts.logger ?? noopLogger;
+  // F6: pure resolver over an injected index. A store is never constructed here.
+  const resolver = createModelResolver(opts.modelsdev ?? (() => null), { logger });
 
   interface LogContext {
     model: string | null;
@@ -66,7 +78,12 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     if (req.method === "GET" && url.pathname === "/v1/models") {
       const data: Array<{ id: string; object: string; owned_by: string; context_length: number | null }> =
         config.upstreams.flatMap((u) =>
-          u.models.map((m) => ({ id: m.id, object: "model", owned_by: u.id, context_length: m.context ?? null })),
+          u.models.map((m) => ({
+            id: m.id,
+            object: "model",
+            owned_by: u.id,
+            context_length: resolver.resolve(u, m).model.context ?? null,
+          })),
         );
       const known = new Set(data.map((m) => m.id));
       for (const u of config.upstreams) {
@@ -77,11 +94,19 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
           if (apiKey) headers.authorization = `Bearer ${apiKey}`;
           const res = await fetchUpstream(`${u.baseURL}/models`, { headers });
           if (!res.ok) continue;
-          const listed = (await res.json()) as { data?: Array<{ id?: string }> };
+          const listed = (await res.json()) as {
+            data?: Array<{ id?: string; context_length?: unknown }>;
+          };
           for (const m of listed.data ?? []) {
             if (typeof m.id === "string" && !known.has(m.id)) {
               known.add(m.id);
-              data.push({ id: m.id, object: "model", owned_by: u.id, context_length: null });
+              const hint = contextHint(m.context_length);
+              data.push({
+                id: m.id,
+                object: "model",
+                owned_by: u.id,
+                context_length: resolver.resolveDiscovered(u, m.id, hint).context,
+              });
             }
           }
         } catch (e) {
@@ -93,12 +118,32 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     }
 
     if (req.method === "GET" && url.pathname === "/librechat/tokenConfig") {
-      const tokenConfig: Record<string, { context: number }> = {};
+      const resolved: ResolvedModel[] = [];
       for (const u of config.upstreams) {
-        // Models without a known context are omitted until models.dev resolution (F6).
-        for (const m of u.models) if (m.context !== undefined) tokenConfig[m.id] = { context: m.context };
+        for (const m of u.models) resolved.push(resolver.resolve(u, m));
       }
-      return Response.json(tokenConfig);
+      return Response.json(tokenConfigOf(resolved));
+    }
+
+    if (req.method === "GET" && url.pathname === "/librechat.yaml.fragment") {
+      const seen = new Set<string>();
+      const models: FragmentModel[] = [];
+      for (const u of config.upstreams) {
+        for (const m of u.models) {
+          if (seen.has(m.id)) continue; // registry order, first wins
+          seen.add(m.id);
+          models.push({ id: m.id, context: resolver.resolve(u, m).model.context ?? null });
+        }
+      }
+      const lc = config.librechat;
+      return fragmentResponse(
+        buildLibreChatFragment({
+          name: lc?.name ?? "openproxy",
+          baseURL: lc?.baseURL ?? `${url.origin}/v1`,
+          apiKey: lc?.apiKey ?? "dummy",
+          models,
+        }),
+      );
     }
 
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
@@ -125,7 +170,13 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         });
       }
       const adapter = createAdapter(kind, { fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
-      const result = await adapter.handle({ upstream: route.upstream, model: route.model, body, signal: req.signal });
+      const resolved = resolver.resolve(route.upstream, route.model);
+      const result = await adapter.handle({
+        upstream: route.upstream,
+        model: resolved.model,
+        body,
+        signal: req.signal,
+      });
       ctx.completed = result.completed ?? null;
       return result.response;
     }

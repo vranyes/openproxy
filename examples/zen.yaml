@@ -1,7 +1,13 @@
 # Gateway config for the live opencode zen endpoint.
 # Model list: GET https://opencode.ai/zen/go/v1/models (public, no key needed).
 # Chat completions require a key: export ZEN_API_KEY=...
-# Context windows below are overlaid from models.dev (registry wins over discovery).
+#
+# The contexts below are EXPLICIT on purpose: this upstream is NOT resolvable
+# from models.dev. There is no `zen` provider; `ZEN_API_KEY` matches no
+# provider's `env`; zen's `/v1/models` carries no context metadata; and the
+# models themselves (`glm-5.2`, `deepseek-v4-pro`) exist in BOTH the `opencode`
+# and `opencode-go` providers, so name-based lookup is ambiguous and resolves to
+# nothing. Keep `context` (and, where useful, `maxOutput`) here.
 upstreams:
   - id: zen
     package: "@opencode/ai/providers/openai-compatible"

@@ -154,3 +154,50 @@ describe("resolveApiKey", () => {
     expect(resolveApiKey(up())).toBeUndefined();
   });
 });
+
+describe("modelsDev override", () => {
+  test("a model-level ref parses", () => {
+    const cfg = parse({ models: [{ id: "m", modelsDev: { provider: "zai", model: "glm-5.2" } }] });
+    expect(cfg.upstreams[0]!.models[0]!.modelsDev).toEqual({ provider: "zai", model: "glm-5.2" });
+  });
+
+  test("a partial ref (provider only) parses", () => {
+    const cfg = parse({ models: [{ id: "m", modelsDev: { provider: "openai" } }] });
+    expect(cfg.upstreams[0]!.models[0]!.modelsDev).toEqual({ provider: "openai" });
+  });
+
+  test("false disables models.dev and stays false", () => {
+    expect(parse({ models: [{ id: "m", modelsDev: false }] }).upstreams[0]!.models[0]!.modelsDev).toBe(false);
+    expect(parse({ modelsDev: false }).upstreams[0]!.modelsDev).toBe(false);
+  });
+
+  test("absent parses to undefined", () => {
+    expect(parse().upstreams[0]!.modelsDev).toBeUndefined();
+    expect(parse().upstreams[0]!.models[0]!.modelsDev).toBeUndefined();
+  });
+
+  test("rejects an invalid value", () => {
+    expect(() => parse({ models: [{ id: "m", modelsDev: "yes" }] })).toThrow();
+    expect(() => parse({ models: [{ id: "m", modelsDev: { provider: "" } }] })).toThrow();
+  });
+});
+
+describe("librechat config", () => {
+  test("parses name/baseURL/apiKey", () => {
+    const cfg = GatewayConfigSchema.parse({
+      upstreams: [baseUpstream()],
+      librechat: { name: "gw", baseURL: "https://gw.example/v1", apiKey: "k" },
+    });
+    expect(cfg.librechat).toEqual({ name: "gw", baseURL: "https://gw.example/v1", apiKey: "k" });
+  });
+
+  test("is optional", () => {
+    expect(parse().librechat).toBeUndefined();
+  });
+
+  test("rejects an invalid baseURL", () => {
+    expect(() =>
+      GatewayConfigSchema.parse({ upstreams: [baseUpstream()], librechat: { baseURL: "not a url" } }),
+    ).toThrow();
+  });
+});

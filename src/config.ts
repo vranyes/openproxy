@@ -29,6 +29,15 @@ export const AdapterKindSchema = z.enum(["passthrough", "opencode", "openai-comp
   }),
 });
 
+// F6: models.dev resolution override. A ref pins the provider (and optionally
+// the catalog model key); `false` disables models.dev metadata for the model or
+// the whole upstream. Both are optional so existing configs parse unchanged.
+export const ModelsDevRefSchema = z.object({
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+});
+export const ModelsDevOverrideSchema = z.union([ModelsDevRefSchema, z.literal(false)]);
+
 export const ModelSchema = z
   .object({
     id: z.string(),
@@ -59,6 +68,8 @@ export const ModelSchema = z
       .array(z.string().min(1))
       .optional()
       .describe("Request-body parameter names removed before forwarding upstream (e.g. stop, user)."),
+    // models.dev pin / opt-out for this model.
+    modelsDev: ModelsDevOverrideSchema.optional(),
   })
   .superRefine((m, ctx) => {
     if (m.context !== undefined && m.maxOutput !== undefined && m.maxOutput > m.context) {
@@ -77,16 +88,28 @@ export const UpstreamSchema = z.object({
   // Translation strategy; defaults to `passthrough` when omitted. The `opencode`
   // adapter dispatches by `package`, so any known package is accepted.
   adapter: AdapterKindSchema.optional(),
+  // models.dev pin / opt-out for every model on this upstream.
+  modelsDev: ModelsDevOverrideSchema.optional(),
   models: z.array(ModelSchema).min(1),
+});
+
+// F6: options for the generated LibreChat fragment (GET /librechat.yaml.fragment).
+export const LibreChatSchema = z.object({
+  name: z.string().min(1).optional(),
+  baseURL: z.string().url().optional(),
+  apiKey: z.string().optional(),
 });
 
 export const GatewayConfigSchema = z.object({
   upstreams: z.array(UpstreamSchema).min(1),
+  librechat: LibreChatSchema.optional(),
 });
 
 export type GatewayModel = z.infer<typeof ModelSchema>;
 export type GatewayUpstream = z.infer<typeof UpstreamSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+export type ModelsDevOverride = z.infer<typeof ModelsDevOverrideSchema>;
+export type LibreChatConfig = z.infer<typeof LibreChatSchema>;
 export type ConfigProvider = () => GatewayConfig;
 /** Config-level adapter value; the runtime canonicalizes it to `adapter/types.ts`'s `AdapterKind`. */
 export type AdapterKindConfig = z.infer<typeof AdapterKindSchema>;

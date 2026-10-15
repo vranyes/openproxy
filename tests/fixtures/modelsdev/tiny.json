@@ -1,0 +1,266 @@
+{
+  "openai": {
+    "id": "openai",
+    "name": "OpenAI",
+    "env": ["OPENAI_API_KEY"],
+    "npm": "@ai-sdk/openai",
+    "models": {
+      "gpt-5-mini": {
+        "id": "gpt-5-mini",
+        "name": "GPT-5 Mini",
+        "family": "gpt-mini",
+        "attachment": true,
+        "tool_call": true,
+        "temperature": false,
+        "modalities": { "input": ["text", "image"], "output": ["text"] },
+        "limit": { "context": 400000, "input": 272000, "output": 128000 },
+        "cost": { "input": 0.25, "output": 2, "cache_read": 0.025 }
+      },
+      "gpt-5-nano": {
+        "id": "gpt-5-nano",
+        "name": "GPT-5 Nano",
+        "family": "gpt-mini",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": false,
+        "modalities": { "input": ["text"], "output": ["text"] }
+      }
+    }
+  },
+  "anthropic": {
+    "id": "anthropic",
+    "name": "Anthropic",
+    "env": ["ANTHROPIC_API_KEY"],
+    "npm": "@ai-sdk/anthropic",
+    "models": {
+      "claude-sonnet-4-5": {
+        "id": "claude-sonnet-4-5",
+        "name": "Claude Sonnet 4.5 (latest)",
+        "family": "claude-sonnet",
+        "attachment": true,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+        "limit": { "context": 200000, "output": 64000 },
+        "canonical_model_id": "anthropic/claude-sonnet-4-5"
+      }
+    }
+  },
+  "opencode": {
+    "id": "opencode",
+    "name": "OpenCode",
+    "env": ["OPENCODE_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://opencode.ai/inference/v1",
+    "models": {
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 131072 },
+        "canonical_model_id": "zhipuai/glm-5.2"
+      },
+      "qwen3-coder": {
+        "id": "qwen3-coder",
+        "name": "Qwen3 Coder",
+        "family": "qwen",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 262144, "output": 65536 }
+      },
+      "deepseek-v4-pro": {
+        "id": "deepseek-v4-pro",
+        "name": "DeepSeek V4 Pro",
+        "family": "deepseek-thinking",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 384000 }
+      }
+    }
+  },
+  "opencode-go": {
+    "id": "opencode-go",
+    "name": "OpenCode Go",
+    "env": ["OPENCODE_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://opencode.ai/inference/go/v1",
+    "models": {
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 131072 }
+      },
+      "deepseek-v4-pro": {
+        "id": "deepseek-v4-pro",
+        "name": "DeepSeek V4 Pro (New)",
+        "family": "deepseek-thinking",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 384000 }
+      }
+    }
+  },
+  "zai": {
+    "id": "zai",
+    "name": "Z.AI",
+    "env": ["ZHIPU_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.z.ai/api/paas/v4",
+    "models": {
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 131072 },
+        "canonical_model_id": "zhipuai/glm-5.2"
+      },
+      "glm-4.6": {
+        "id": "glm-4.6",
+        "name": "GLM-4.6",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 204800, "output": 131072 }
+      }
+    }
+  },
+  "zai-coding-plan": {
+    "id": "zai-coding-plan",
+    "name": "Z.AI Coding Plan",
+    "env": ["ZHIPU_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.z.ai/api/coding/paas/v4",
+    "models": {
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 131072 },
+        "canonical_model_id": "zhipuai/glm-5.2"
+      }
+    }
+  },
+  "zhipuai": {
+    "id": "zhipuai",
+    "name": "Zhipu AI",
+    "env": ["ZHIPU_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://open.bigmodel.cn/api/paas/v4",
+    "models": {
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 131072 }
+      }
+    }
+  },
+  "aihubmix": {
+    "id": "aihubmix",
+    "name": "AIHubMix",
+    "env": ["AIHUBMIX_API_KEY"],
+    "npm": "@aihubmix/ai-sdk-provider",
+    "models": {
+      "claude-sonnet-4-5": {
+        "id": "claude-sonnet-4-5",
+        "name": "Claude Sonnet 4.5 (latest)",
+        "family": "claude-sonnet",
+        "attachment": true,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 64000 },
+        "canonical_model_id": "anthropic/claude-sonnet-4-5"
+      },
+      "gpt-5-mini": {
+        "id": "gpt-5-mini",
+        "name": "GPT-5 Mini",
+        "family": "gpt-mini",
+        "attachment": true,
+        "tool_call": true,
+        "temperature": false,
+        "modalities": { "input": ["text", "image"], "output": ["text"] },
+        "limit": { "context": 400000, "output": 128000 }
+      }
+    }
+  },
+  "deepinfra": {
+    "id": "deepinfra",
+    "name": "Deep Infra",
+    "env": ["DEEPINFRA_API_KEY"],
+    "npm": "@ai-sdk/deepinfra",
+    "models": {
+      "anthropic/claude-fable-5": {
+        "id": "anthropic/claude-fable-5",
+        "name": "Claude Fable 5",
+        "family": "claude-fable",
+        "attachment": true,
+        "tool_call": true,
+        "temperature": false,
+        "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+        "limit": { "context": 1000000, "output": 128000 },
+        "canonical_model_id": "anthropic/claude-fable-5"
+      }
+    }
+  },
+  "nano-gpt": {
+    "id": "nano-gpt",
+    "name": "NanoGPT",
+    "env": ["NANO_GPT_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://nano-gpt.com/api/v1",
+    "models": {
+      "z-ai/glm-5.2": {
+        "id": "z-ai/glm-5.2",
+        "name": "GLM 5.2",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1048576, "input": 1048576, "output": 131072 },
+        "canonical_model_id": "zhipuai/glm-5.2"
+      },
+      "TEE/glm-5.2": {
+        "id": "TEE/glm-5.2",
+        "name": "GLM 5.2 TEE",
+        "family": "glm",
+        "attachment": false,
+        "tool_call": true,
+        "temperature": true,
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "limit": { "context": 1048576, "input": 1048576, "output": 131072 },
+        "canonical_model_id": "zhipuai/glm-5.2"
+      }
+    }
+  }
+}
