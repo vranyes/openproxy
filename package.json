@@ -5,11 +5,17 @@
   "type": "module",
   "scripts": {
     "test": "bun test",
-    "start": "bun src/index.ts"
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@opencode/ai": "2.0.29",
     "yaml": "^2.7.0",
     "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
   }
 }

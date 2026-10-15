@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createApp, type UpstreamFetcher } from "../src/server";
+import { createApp } from "../src/server";
+import { json, stubUpstream, type ChatCompletionResponse, type ModelsResponse } from "./helpers";
 import type { GatewayConfig } from "../src/config";
 
 const config: GatewayConfig = {
@@ -21,10 +22,6 @@ const config: GatewayConfig = {
   ],
 };
 
-function stubUpstream(handler: (req: Request) => Response | Promise<Response>): UpstreamFetcher {
-  return (url, init) => handler(new Request(url, init));
-}
-
 describe("GET /healthz", () => {
   test("returns ok", async () => {
     const app = createApp(config, { fetchUpstream: stubUpstream(() => new Response("nope", { status: 500 })) });
@@ -39,7 +36,7 @@ describe("GET /v1/models", () => {
     const app = createApp(config, { fetchUpstream: stubUpstream(() => new Response("nope", { status: 500 })) });
     const res = await app.fetch(new Request("http://gateway/v1/models"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await json<ModelsResponse>(res);
     expect(body.object).toBe("list");
     expect(body.data).toEqual([
       { id: "qwen3-coder-30b", object: "model", owned_by: "local", context_length: 131072 },
@@ -80,7 +77,7 @@ describe("GET /v1/models with discover:true", () => {
     });
     const res = await app.fetch(new Request("http://gateway/v1/models"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await json<ModelsResponse>(res);
     expect(body.data).toEqual([
       { id: "glm-5", object: "model", owned_by: "zen", context_length: 131072 },
       { id: "kimi-k3", object: "model", owned_by: "zen", context_length: null },
@@ -93,7 +90,7 @@ describe("GET /v1/models with discover:true", () => {
     });
     const res = await app.fetch(new Request("http://gateway/v1/models"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await json<ModelsResponse>(res);
     expect(body.data).toEqual([
       { id: "glm-5", object: "model", owned_by: "zen", context_length: 131072 },
     ]);
@@ -138,8 +135,8 @@ describe("POST /v1/chat/completions (non-stream)", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.choices[0].message).toEqual({ role: "assistant", content: "hi" });
+    const body = await json<ChatCompletionResponse>(res);
+    expect(body.choices[0]!.message).toEqual({ role: "assistant", content: "hi" });
     expect(seen!.url).toBe("http://upstream.test/v1/chat/completions");
     expect(seen!.body).toMatchObject({ model: "qwen3-coder:30b" });
   });
@@ -205,7 +202,7 @@ describe("models without a declared context", () => {
     });
     const res = await app.fetch(new Request("http://gateway/v1/models"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await json<ModelsResponse>(res);
     expect(body.data).toEqual([
       { id: "mystery-model", object: "model", owned_by: "local", context_length: null },
     ]);

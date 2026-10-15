@@ -1,9 +1,18 @@
-import { resolveApiKey, type GatewayConfig, type GatewayModel, type GatewayUpstream } from "./config";
+import {
+  resolveApiKey,
+  type ConfigProvider,
+  type GatewayConfig,
+  type GatewayModel,
+  type GatewayUpstream,
+} from "./config";
+import { errorResponse } from "./ops/errors";
+import { noopLogger, safeLog, type Logger } from "./ops/log";
 
 export type UpstreamFetcher = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface AppOptions {
   fetchUpstream?: UpstreamFetcher;
+  logger?: Logger;
 }
 
 interface Route {
@@ -19,10 +28,18 @@ function findModel(config: GatewayConfig, id: string): Route | null {
   return null;
 }
 
-export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
+export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptions = {}) {
   const fetchUpstream: UpstreamFetcher = opts.fetchUpstream ?? ((url, init) => globalThis.fetch(url, init));
+  const getConfig: ConfigProvider = typeof config === "function" ? config : () => config;
+  const logger = opts.logger ?? noopLogger;
 
-  async function handle(req: Request): Promise<Response> {
+  interface LogContext {
+    model: string | null;
+    upstream: string | null;
+  }
+
+  async function handle(req: Request, ctx: LogContext): Promise<Response> {
+    const config = getConfig();
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/healthz") {
@@ -51,7 +68,7 @@ export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
             }
           }
         } catch (e) {
-          if (process.env.OPENPROXY_DEBUG) console.error("discovery failed:", String(e).slice(0, 300));
+          safeLog(logger, { level: "error", msg: "discovery failed", upstream: u.id, error: String(e).slice(0, 300) });
           continue;
         }
       }
@@ -72,15 +89,15 @@ export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
       try {
         body = (await req.json()) as Record<string, unknown>;
       } catch {
-        return Response.json({ error: { message: "invalid JSON body", type: "invalid_request_error" } }, { status: 400 });
+        return errorResponse("invalid JSON body", 400);
       }
-      const route = typeof body.model === "string" ? findModel(config, body.model) : null;
+      const requested = typeof body.model === "string" ? body.model : null;
+      const route = requested !== null ? findModel(config, requested) : null;
       if (!route) {
-        return Response.json(
-          { error: { message: `model not found: ${String(body.model)}`, type: "invalid_request_error" } },
-          { status: 404 },
-        );
+        return errorResponse(`model not found: ${String(body.model)}`, 404);
       }
+      ctx.model = requested;
+      ctx.upstream = route.upstream.id;
       const headers: Record<string, string> = { "content-type": "application/json" };
       const apiKey = resolveApiKey(route.upstream);
       if (apiKey) headers.authorization = `Bearer ${apiKey}`;
@@ -92,8 +109,32 @@ export function createApp(config: GatewayConfig, opts: AppOptions = {}) {
       });
     }
 
-    return Response.json({ error: { message: "not found", type: "invalid_request_error" } }, { status: 404 });
+    return errorResponse("not found", 404);
   }
 
-  return { fetch: handle };
+  async function fetch(req: Request): Promise<Response> {
+    const started = performance.now();
+    const path = new URL(req.url).pathname;
+    const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+    const ctx: LogContext = { model: null, upstream: null };
+    let res: Response;
+    try {
+      res = await handle(req, ctx);
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      // Post-headers stream errors are NOT catchable here; accepted.
+      safeLog(logger, { level: "error", msg: "request failed", request_id: requestId, method: req.method,
+        path, model: ctx.model, upstream: ctx.upstream, status: 500,
+        latency_ms: Math.round(performance.now() - started), error: err.message, stack: err.stack });
+      return errorResponse("internal error", 500, "server_error");
+    }
+    safeLog(logger, { level: "info", msg: "request", request_id: requestId, method: req.method, path,
+      model: ctx.model, upstream: ctx.upstream, status: res.status,
+      latency_ms: Math.round(performance.now() - started),
+      // Passthrough today: bodies not parsed; usage unknown and ALWAYS null for streams. F4 fills these.
+      usage: null, context_ratio: null });
+    return res;
+  }
+
+  return { fetch };
 }

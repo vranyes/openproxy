@@ -75,6 +75,7 @@ export const GatewayConfigSchema = z.object({
 export type GatewayModel = z.infer<typeof ModelSchema>;
 export type GatewayUpstream = z.infer<typeof UpstreamSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+export type ConfigProvider = () => GatewayConfig;
 
 export function resolveApiKey(u: GatewayUpstream): string | undefined {
   if (u.apiKey) return u.apiKey;

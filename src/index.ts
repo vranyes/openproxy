@@ -1,14 +1,15 @@
-import { readFileSync } from "node:fs";
-import { parse } from "yaml";
-import { GatewayConfigSchema } from "./config";
 import { createApp } from "./server";
+import { createConfigStore } from "./ops/config";
+import { jsonLogger } from "./ops/log";
 
 const configPath = process.argv[2] ?? "examples/gateway.yaml";
-const raw = parse(readFileSync(configPath, "utf8"));
-const config = GatewayConfigSchema.parse(raw);
-
 const port = Number(process.env.PORT ?? 8080);
-const app = createApp(config);
+const logger = jsonLogger();
+
+const store = createConfigStore(configPath, { logger });
+// Getter semantics: store.current is a live value; the arrow re-reads it per request.
+// Do NOT pass the bare value (snapshot).
+const app = createApp(() => store.current, { logger });
 
 Bun.serve({ port, fetch: app.fetch });
-console.log(`openproxy listening on :${port} (config: ${configPath})`);
+logger({ level: "info", msg: "listening", port, config: configPath });

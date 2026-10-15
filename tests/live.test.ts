@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/server";
+import { json } from "./helpers";
 
 // True integration: talks to the live upstream, no fakes.
 // Run with: OPENPROXY_LIVE_TEST=1 bun test
@@ -20,10 +21,10 @@ describe("live zen upstream", () => {
     });
     const res = await app.fetch(new Request("http://gateway/v1/models"));
     expect(res.status).toBe(200);
-    const body = await res.json();
-    const ids = (body.data as Array<{ id: string }>).map((m) => m.id);
+    const body = await json<{ data: Array<{ id: string; context_length?: number | null }> }>(res);
+    const ids = body.data.map((m) => m.id);
     expect(ids).toContain("glm-5.2");
     expect(ids.length).toBeGreaterThan(10);
-    expect(body.data.find((m: { id: string }) => m.id === "glm-5.2")).toMatchObject({ context_length: 1000000 });
+    expect(body.data.find((m) => m.id === "glm-5.2")).toMatchObject({ context_length: 1000000 });
   }, 30000);
 });
