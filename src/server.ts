@@ -12,6 +12,7 @@ import type { AdapterMeta } from "./adapter/types";
 import { resolveUpstreamHeaders, setHeader } from "./headers";
 import { buildLibreChatFragment, fragmentResponse, type FragmentModel } from "./librechat";
 import { createModelResolver, tokenConfigOf, type ResolvedModel } from "./registry";
+import type { ModelCost } from "./cost";
 import type { ModelsDevIndex } from "./modelsdev";
 import { errorResponse } from "./ops/errors";
 import { authToken, isAuthorized, resolveAuth, unauthorizedResponse } from "./ops/auth";
@@ -60,6 +61,25 @@ function findModel(config: GatewayConfig, id: string): Route | null {
 /** A positive-integer `context_length` from an upstream `/models` payload, else undefined. */
 function contextHint(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/** A `/v1/models` row: the OpenAI shape plus LibreChat's `context_length` and `pricing`. */
+interface ModelRow {
+  id: string;
+  object: string;
+  owned_by: string;
+  /** Resolved context window (never null: rows without one are omitted). */
+  context_length: number;
+  /** USD per token, as strings, so LibreChat's `parseFloat` can read them. */
+  pricing: { prompt: string; completion: string };
+}
+
+/** `ResolvedModel.cost` (USD per 1e6 tokens) -> LibreChat's USD-per-token strings. */
+function pricingOf(cost: ModelCost | null): { prompt: string; completion: string } {
+  return {
+    prompt: String((cost?.input ?? 0) / 1e6),
+    completion: String((cost?.output ?? 0) / 1e6),
+  };
 }
 
 export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptions = {}) {
@@ -153,16 +173,29 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     }
 
     if (req.method === "GET" && url.pathname === "/v1/models") {
-      const data: Array<{ id: string; object: string; owned_by: string; context_length: number | null }> =
-        config.upstreams.flatMap((u) =>
-          u.models.map((m) => ({
+      // LibreChat's `fetchModels()` parses this body against a schema that
+      // requires `context_length: number` and string `pricing` on EVERY row, so
+      // a single null/number-less row fails the whole response. Emit only rows
+      // with a resolved context, and always include pricing (USD per token).
+      const data: ModelRow[] = [];
+      // Registry-first precedence: every configured id shadows a discovered one,
+      // even when the configured row itself is omitted for lacking a context.
+      const known = new Set<string>();
+      for (const u of config.upstreams) {
+        for (const m of u.models) {
+          known.add(m.id);
+          const resolved = resolver.resolve(u, m);
+          const context = resolved.model.context;
+          if (context === undefined) continue;
+          data.push({
             id: m.id,
             object: "model",
             owned_by: u.id,
-            context_length: resolver.resolve(u, m).model.context ?? null,
-          })),
-        );
-      const known = new Set(data.map((m) => m.id));
+            context_length: context,
+            pricing: pricingOf(resolved.cost),
+          });
+        }
+      }
       for (const u of config.upstreams) {
         if (!u.discover) continue;
         try {
@@ -180,11 +213,16 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
             if (typeof m.id === "string" && !known.has(m.id)) {
               known.add(m.id);
               const hint = contextHint(m.context_length);
+              const context = resolver.resolveDiscovered(u, m.id, hint).context;
+              if (context === null || context === undefined) continue;
+              // No ResolvedModel for a discovered id, so no resolved cost to
+              // read: advertise "0" rather than re-deriving pricing here.
               data.push({
                 id: m.id,
                 object: "model",
                 owned_by: u.id,
-                context_length: resolver.resolveDiscovered(u, m.id, hint).context,
+                context_length: context,
+                pricing: { prompt: "0", completion: "0" },
               });
             }
           }

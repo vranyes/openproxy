@@ -79,7 +79,7 @@ Gateway still sanitizes params per model as defense-in-depth (LibreChat also has
 
 ## 4. LibreChat context lengths — how it actually learns them
 
-LibreChat does **not** infer context from `GET /v1/models` on `custom` endpoints. `fetch: true` only syncs IDs.
+LibreChat's `fetchModels()` (`packages/api/src/utils/tokens.ts`, v0.8.8) `safeParse`s the `GET /v1/models` body and builds a token config from it, so a row must carry `id`, `pricing: { prompt, completion }` (USD per token, strings), and a numeric `context_length`; one malformed row fails the whole response and LibreChat falls back to its built-in (wrong) map. openproxy therefore emits the resolved `context_length` and per-token `pricing` on every row and omits rows whose context is unresolved.
 
 Effective window comes from (config `v1.3.13+`):
 
@@ -88,7 +88,7 @@ Effective window comes from (config `v1.3.13+`):
 
 Therefore gateway exposes (generated from registry, single source of truth):
 
-- `GET /v1/models` — standard OpenAI list (for `fetch: true`)
+- `GET /v1/models` — OpenAI list (for `fetch: true`) with `context_length` + `pricing`, omitting models with no resolved context
 - `GET /librechat/tokenConfig` — JSON → YAML-ready `tokenConfig:` block
 - `GET /librechat.yaml.fragment` — full custom-endpoint stanza (optional, M2)
 - Server-side enforcement regardless: if `prompt_tokens + max_tokens > context`, return `400 context_length_exceeded` with `max_context` + `used` (LibreChat surfaces instead of silent truncation).

@@ -32,14 +32,21 @@ describe("GET /v1/models with models.dev", () => {
     const app = createApp(openaiConfig, { fetchUpstream: noFetch, modelsdev });
     const body = await json<ModelsResponse>(await app.fetch(new Request("http://gateway/v1/models")));
     expect(body.data).toEqual([
-      { id: "gpt-5-mini", object: "model", owned_by: "openai", context_length: 400000 },
+      {
+        id: "gpt-5-mini",
+        object: "model",
+        owned_by: "openai",
+        context_length: 400000,
+        // models.dev cost: input 0.25, output 2 (USD per 1e6) -> per token.
+        pricing: { prompt: "2.5e-7", completion: "0.000002" },
+      },
     ]);
   });
 
-  test("without models.dev the same model stays null (baseline unchanged)", async () => {
+  test("without models.dev the model is omitted (no context to advertise)", async () => {
     const app = createApp(openaiConfig, { fetchUpstream: noFetch });
     const body = await json<ModelsResponse>(await app.fetch(new Request("http://gateway/v1/models")));
-    expect(body.data[0]!.context_length).toBeNull();
+    expect(body.data).toEqual([]);
   });
 });
 
@@ -76,10 +83,10 @@ describe("GET /v1/models discovery + models.dev precedence", () => {
     });
     const body = await json<ModelsResponse>(await app.fetch(new Request("http://gateway/v1/models")));
     const byId = Object.fromEntries(body.data.map((m) => [m.id, m] as [string, ModelEntry]));
-    expect(byId["placeholder"]!.context_length).toBeNull();
+    expect(byId["placeholder"]).toBeUndefined(); // no context -> omitted
     expect(byId["anthropic/claude-fable-5"]!.context_length).toBe(1000000);
     expect(byId["mystery-hinted"]!.context_length).toBe(2048);
-    expect(byId["mystery-plain"]!.context_length).toBeNull();
+    expect(byId["mystery-plain"]).toBeUndefined(); // no hint -> omitted
   });
 
   test("an invalid non-integer hint is ignored", async () => {
@@ -90,7 +97,7 @@ describe("GET /v1/models discovery + models.dev precedence", () => {
       ),
     });
     const body = await json<ModelsResponse>(await app.fetch(new Request("http://gateway/v1/models")));
-    expect(body.data.find((m) => m.id === "mystery-x")!.context_length).toBeNull();
+    expect(body.data.find((m) => m.id === "mystery-x")).toBeUndefined();
   });
 });
 

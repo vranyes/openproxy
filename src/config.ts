@@ -55,7 +55,7 @@ export const ModelSchema = z
     // modelID sent upstream; defaults to `id` when omitted.
     upstream: z.string().optional(),
     // Context window in tokens. Optional: filled from the models.dev snapshot (F6) when absent.
-    // Until F6, a model with no context is served with context_length: null and omitted from tokenConfig.
+    // A model with no resolvable context is omitted from `GET /v1/models` and from tokenConfig.
     context: z.number().int().positive().optional(),
     // Max output tokens the upstream accepts. Must be <= context when both are set.
     maxOutput: z

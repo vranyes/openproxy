@@ -104,16 +104,36 @@ Set `librechat.name`, `librechat.baseURL`, and `librechat.apiKey` in
 `gateway.yaml` to override the defaults (`openproxy`,
 `<request-origin>/v1`, `dummy`).
 
-`fetch: true` only syncs model IDs — LibreChat learns context windows from
-`tokenConfig`, which the gateway generates from its registry (and models.dev):
+`GET /v1/models` returns the OpenAI list shape augmented with the resolved
+`context_length` and per-token `pricing` that LibreChat's model fetch parses, so
+LibreChat learns the correct context window when it pulls the model list:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "glm-5.2",
+      "object": "model",
+      "owned_by": "opencode-go",
+      "context_length": 1000000,
+      "pricing": { "prompt": "0", "completion": "0" }
+    }
+  ]
+}
+```
+
+`pricing.prompt` / `pricing.completion` are USD **per token**, as strings
+(models.dev cost, USD per 1e6 tokens, divided by 1e6 — e.g. `"2.5e-7"`); a model
+with no known cost reports `"0"`. A model whose context cannot be resolved is
+**omitted** from `data`: LibreChat's schema requires a numeric `context_length`,
+and one bad row fails the whole list. The gateway still generates `tokenConfig`
+from its registry (and models.dev) for clients that read it:
 
 ```sh
 curl http://openproxy:8080/librechat/tokenConfig
 # {"glm-5.2":{"context":1000000}, ...}
 ```
-
-Models discovered live from the upstream but not resolvable anywhere are served
-with `context_length: null` and left out of `tokenConfig`.
 
 ## Environment
 

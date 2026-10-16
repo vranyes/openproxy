@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 import { createApp } from "../src/server";
 import { json, stubUpstream, type ChatCompletionResponse, type ModelsResponse } from "./helpers";
 import type { GatewayConfig } from "../src/config";
@@ -39,7 +40,13 @@ describe("GET /v1/models", () => {
     const body = await json<ModelsResponse>(res);
     expect(body.object).toBe("list");
     expect(body.data).toEqual([
-      { id: "qwen3-coder-30b", object: "model", owned_by: "local", context_length: 131072 },
+      {
+        id: "qwen3-coder-30b",
+        object: "model",
+        owned_by: "local",
+        context_length: 131072,
+        pricing: { prompt: "0", completion: "0" },
+      },
     ]);
   });
 });
@@ -79,8 +86,13 @@ describe("GET /v1/models with discover:true", () => {
     expect(res.status).toBe(200);
     const body = await json<ModelsResponse>(res);
     expect(body.data).toEqual([
-      { id: "glm-5", object: "model", owned_by: "zen", context_length: 131072 },
-      { id: "kimi-k3", object: "model", owned_by: "zen", context_length: null },
+      {
+        id: "glm-5",
+        object: "model",
+        owned_by: "zen",
+        context_length: 131072,
+        pricing: { prompt: "0", completion: "0" },
+      },
     ]);
   });
 
@@ -92,7 +104,13 @@ describe("GET /v1/models with discover:true", () => {
     expect(res.status).toBe(200);
     const body = await json<ModelsResponse>(res);
     expect(body.data).toEqual([
-      { id: "glm-5", object: "model", owned_by: "zen", context_length: 131072 },
+      {
+        id: "glm-5",
+        object: "model",
+        owned_by: "zen",
+        context_length: 131072,
+        pricing: { prompt: "0", completion: "0" },
+      },
     ]);
   });
 
@@ -196,16 +214,14 @@ const noContextConfig: GatewayConfig = {
 };
 
 describe("models without a declared context", () => {
-  test("GET /v1/models reports context_length null", async () => {
+  test("GET /v1/models omits models with no resolvable context", async () => {
     const app = createApp(noContextConfig, {
       fetchUpstream: stubUpstream(() => new Response("nope", { status: 500 })),
     });
     const res = await app.fetch(new Request("http://gateway/v1/models"));
     expect(res.status).toBe(200);
     const body = await json<ModelsResponse>(res);
-    expect(body.data).toEqual([
-      { id: "mystery-model", object: "model", owned_by: "local", context_length: null },
-    ]);
+    expect(body.data).toEqual([]);
   });
 
   test("GET /librechat/tokenConfig omits models without context", async () => {
@@ -215,5 +231,42 @@ describe("models without a declared context", () => {
     const res = await app.fetch(new Request("http://gateway/librechat/tokenConfig"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({});
+  });
+});
+
+// LibreChat's `fetchModels()` runs `safeParse` on the `/v1/models` body against
+// a schema that requires, for EVERY row, a string `id`, string `pricing.prompt`
+// / `pricing.completion`, and a NUMERIC `context_length`. One non-conforming row
+// fails the whole response, so the response must be parseable as a unit.
+const libreChatRowSchema = z.object({
+  id: z.string(),
+  pricing: z.object({ prompt: z.string(), completion: z.string() }),
+  context_length: z.number(),
+});
+const libreChatModelsSchema = z.object({ data: z.array(libreChatRowSchema) });
+
+describe("GET /v1/models is consumable by LibreChat", () => {
+  test("every row satisfies LibreChat's schema when all contexts resolve", async () => {
+    const app = createApp(config, { fetchUpstream: stubUpstream(() => new Response("nope", { status: 500 })) });
+    const res = await app.fetch(new Request("http://gateway/v1/models"));
+    const parsed = await json<unknown>(res);
+    expect(libreChatModelsSchema.safeParse(parsed).success).toBe(true);
+  });
+
+  test("a model with no context is omitted so the remaining rows still parse", async () => {
+    const mixed: GatewayConfig = {
+      upstreams: [
+        {
+          id: "local",
+          package: "@opencode/ai/providers/openai-compatible",
+          baseURL: "http://upstream.test/v1",
+          models: [{ id: "known", context: 8192 }, { id: "unknown" }],
+        },
+      ],
+    };
+    const app = createApp(mixed, { fetchUpstream: stubUpstream(() => new Response("nope", { status: 500 })) });
+    const parsed = await json<ModelsResponse>(await app.fetch(new Request("http://gateway/v1/models")));
+    expect(libreChatModelsSchema.safeParse(parsed).success).toBe(true);
+    expect(parsed.data.map((m) => m.id)).toEqual(["known"]);
   });
 });
