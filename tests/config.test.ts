@@ -107,6 +107,22 @@ describe("model cost", () => {
   });
 });
 
+describe("discoverUrl config", () => {
+  test("parses an absolute URL", () => {
+    const cfg = parse({ discoverUrl: "https://opencode.ai/inference/go/v1/models" });
+    expect(cfg.upstreams[0]!.discoverUrl).toBe("https://opencode.ai/inference/go/v1/models");
+  });
+
+  test("absent parses to undefined", () => {
+    expect(parse().upstreams[0]!.discoverUrl).toBeUndefined();
+  });
+
+  test("rejects a value that is not a valid URL", () => {
+    expect(() => parse({ discoverUrl: "not a url" })).toThrow();
+    expect(() => parse({ discoverUrl: "/models" })).toThrow();
+  });
+});
+
 describe("adapter", () => {
   test("accepts every adapter kind", () => {
     expect(parse({ adapter: "passthrough" }).upstreams[0]!.adapter).toBe("passthrough");

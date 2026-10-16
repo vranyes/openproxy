@@ -29,6 +29,12 @@ three sources, in strict precedence:
 3. **discovery hint** — a positive-integer `context_length` in the upstream's
    `/v1/models` response, used only when the id resolves to no models.dev provider.
 
+Live discovery (`discover: true`) fetches `<baseURL>/models` by default; set
+`discoverUrl` when the model list lives elsewhere (e.g. OpenCode Go publishes it
+at `https://opencode.ai/inference/go/v1/models` while its chat baseURLs are
+`.../openai/v1` and `.../anthropic/v1`). A discovered model is only advertised
+once it has a resolvable context.
+
 Pin or disable models.dev per model or per upstream with `modelsDev:` — either a
 `{ provider, model }` reference (authoritative: a miss does not fall back) or
 `false`:

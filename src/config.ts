@@ -123,6 +123,8 @@ export const UpstreamSchema = z.object({
   // Env var holding the upstream key; explicit null means "no auth" (unset, not an error).
   apiKeyEnv: z.string().nullable().optional(),
   discover: z.boolean().optional(),
+  // Full URL to fetch the model list from; defaults to `<baseURL>/models`.
+  discoverUrl: z.string().url().optional(),
   // Translation strategy; defaults to `passthrough` when omitted. The `opencode`
   // adapter dispatches by `package`, so any known package is accepted.
   adapter: AdapterKindSchema.optional(),

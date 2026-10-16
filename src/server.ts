@@ -204,7 +204,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
           const headers = resolveUpstreamHeaders({ upstream: u });
           const apiKey = resolveApiKey(u);
           if (apiKey) setHeader(headers, "authorization", `Bearer ${apiKey}`);
-          const res = await fetchUpstream(`${u.baseURL}/models`, { headers });
+          const res = await fetchUpstream(u.discoverUrl ?? `${u.baseURL}/models`, { headers });
           if (!res.ok) continue;
           const listed = (await res.json()) as {
             data?: Array<{ id?: string; context_length?: unknown }>;
