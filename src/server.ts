@@ -34,8 +34,11 @@ export interface AppOptions {
 }
 
 interface Route {
+  /** The effective upstream: `package`/`baseURL` are the resolved (possibly derived) values. */
   upstream: GatewayUpstream;
   model: GatewayModel;
+  /** The full resolution (context, cost, dialect) for this model. */
+  resolved: ResolvedModel;
 }
 
 // Packages that do NOT natively speak the OpenAI chat-completions dialect. A
@@ -49,14 +52,6 @@ const NON_CHAT_NATIVE_PACKAGES = new Set<string>([
   "@opencode/ai/providers/openai/responses",
   "@opencode/ai/providers/openai-compatible/responses",
 ]);
-
-function findModel(config: GatewayConfig, id: string): Route | null {
-  for (const upstream of config.upstreams) {
-    const model = upstream.models.find((m) => m.id === id);
-    if (model) return { upstream, model };
-  }
-  return null;
-}
 
 /** A positive-integer `context_length` from an upstream `/models` payload, else undefined. */
 function contextHint(value: unknown): number | undefined {
@@ -91,6 +86,26 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
   const limiter = createRateLimiter({ now: opts.now ?? (() => Date.now()), config: () => getConfig() });
   // F6: pure resolver over an injected index. A store is never constructed here.
   const resolver = createModelResolver(opts.modelsdev ?? (() => null), { logger });
+
+  /**
+   * Resolve a requested id to a routable route. Only CONFIGURED models are
+   * routable (discovery feeds `GET /v1/models` only). An upstream may leave
+   * `package`/`baseURL` unset and have them derived per model from models.dev
+   * (F11): the effective upstream carries those resolved values. A model whose
+   * dialect or base URL cannot be resolved is NOT routable (null -> 404)
+   * instead of being relayed on a guessed wire format.
+   */
+  function findModel(config: GatewayConfig, id: string): Route | null {
+    for (const upstream of config.upstreams) {
+      const model = upstream.models.find((m) => m.id === id);
+      if (!model) continue;
+      const resolved = resolver.resolve(upstream, model);
+      if (resolved.package === undefined || resolved.baseURL === undefined) return null;
+      const effective: GatewayUpstream = { ...upstream, package: resolved.package, baseURL: resolved.baseURL };
+      return { upstream: effective, model: resolved.model, resolved };
+    }
+    return null;
+  }
   // F8: default session ids are stable per upstream for the process lifetime so
   // a client that omits the session header still gets one cache-friendly id.
   const sessionIds = new Map<string, string>();
@@ -187,6 +202,10 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
           const resolved = resolver.resolve(u, m);
           const context = resolved.model.context;
           if (context === undefined) continue;
+          // Advertise only routable models: a row without a dialect or base URL
+          // (models.dev miss on an upstream that omitted them) would be listed
+          // but rejected with a 404 on use.
+          if (resolved.package === undefined || resolved.baseURL === undefined) continue;
           data.push({
             id: m.id,
             object: "model",
@@ -198,13 +217,16 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       }
       for (const u of config.upstreams) {
         if (!u.discover) continue;
+        // Discovery needs an explicit URL or a baseURL to hang `/models` off.
+        const discoverUrl = u.discoverUrl ?? (u.baseURL !== undefined ? `${u.baseURL}/models` : undefined);
+        if (discoverUrl === undefined) continue;
         try {
           // F8: static headers + default UA; no session (discovery is not a
           // conversation) and apiKey auth applied last (case-collapsed).
           const headers = resolveUpstreamHeaders({ upstream: u });
           const apiKey = resolveApiKey(u);
           if (apiKey) setHeader(headers, "authorization", `Bearer ${apiKey}`);
-          const res = await fetchUpstream(u.discoverUrl ?? `${u.baseURL}/models`, { headers });
+          const res = await fetchUpstream(discoverUrl, { headers });
           if (!res.ok) continue;
           const listed = (await res.json()) as {
             data?: Array<{ id?: string; context_length?: unknown }>;
@@ -268,16 +290,17 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       if (prep instanceof Response) return prep;
       const { route, upstream, body } = prep;
       const kind = selectAdapter(route.upstream);
-      if (kind === "passthrough" && NON_CHAT_NATIVE_PACKAGES.has(route.upstream.package)) {
+      const pkg = route.upstream.package;
+      if (kind === "passthrough" && pkg !== undefined && NON_CHAT_NATIVE_PACKAGES.has(pkg)) {
         safeLog(logger, {
           level: "warn",
           msg: "passthrough to a non-OpenAI-compatible package may be incorrect",
           upstream: route.upstream.id,
-          package: route.upstream.package,
+          package: pkg,
         });
       }
       const adapter = createAdapter(kind, { fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
-      const resolved = resolver.resolve(route.upstream, route.model);
+      const resolved = route.resolved;
       const result = await adapter.handle({
         upstream,
         model: resolved.model,
@@ -296,7 +319,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       if (prep instanceof Response) return prep;
       const { route, upstream, body } = prep;
       const adapter = createResponsesAdapter({ fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
-      const resolved = resolver.resolve(route.upstream, route.model);
+      const resolved = route.resolved;
       const result = await adapter.handle({
         upstream,
         model: resolved.model,

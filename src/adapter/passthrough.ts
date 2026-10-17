@@ -16,7 +16,9 @@ export function createPassthroughAdapter(deps: AdapterDeps): Adapter {
       const apiKey = resolveApiKey(upstream);
       if (apiKey) setHeader(headers, "authorization", `Bearer ${apiKey}`); // auth wins; case-collapsed
       const upstreamBody = { ...body, model: model.upstream ?? model.id };
-      const upstreamRes = await deps.fetchUpstream(`${upstream.baseURL}/chat/completions`, {
+      const baseURL = upstream.baseURL;
+      if (baseURL === undefined) throw new Error(`upstream ${upstream.id} has no baseURL (unroutable)`);
+      const upstreamRes = await deps.fetchUpstream(`${baseURL}/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify(upstreamBody),

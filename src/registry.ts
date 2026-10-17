@@ -6,7 +6,8 @@
 // Resolution NEVER picks a provider arbitrarily. When several providers match
 // equally, the model stays unresolved and a warn-once entry is logged. The
 // config model is never mutated: `resolve()` returns a fresh copy.
-import type { GatewayModel, GatewayUpstream, ModelsDevOverride } from "./config";
+import type { GatewayModel, GatewayUpstream, ModelsDevOverride, ProviderPackage } from "./config";
+import { hostTrusted, packageForNpm } from "./dialect";
 import type { ModelCost } from "./cost";
 import type { ModelMatch, ModelsDevIndex, ModelsDevModel } from "./modelsdev";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
@@ -28,6 +29,12 @@ export interface ResolvedModel {
   cost: ModelCost | null;
   costSource: MetadataSource;
   modelsDev: { provider: string; model: string } | null;
+  /** Effective dialect (F11): explicit `package`, else derived from models.dev `npm`. */
+  package?: ProviderPackage;
+  packageSource: MetadataSource;
+  /** Effective base URL (F11): explicit `baseURL`, else derived from models.dev `api` (host-pinned). */
+  baseURL?: string;
+  baseURLSource: MetadataSource;
 }
 
 export interface DiscoveredResolution {
@@ -139,6 +146,49 @@ export function createModelResolver(
     return m.modelsDev === false || u.modelsDev === false;
   }
 
+  /**
+   * F11: the effective dialect + base URL for a model. Explicit config wins;
+   * otherwise `npm`/`api` (the model's models.dev transport, per-model override
+   * first) fill in. A derived base URL is accepted only when its host is in
+   * `trustedHosts`, so a catalog cannot point this upstream's key at a new host.
+   */
+  function dialect(
+    u: GatewayUpstream,
+    m: GatewayModel,
+    npm: string | undefined,
+    api: string | undefined,
+  ): Pick<ResolvedModel, "package" | "packageSource" | "baseURL" | "baseURLSource"> {
+    // Precedence: model override > upstream > models.dev.
+    let pkg = m.package ?? u.package;
+    let packageSource: MetadataSource = pkg !== undefined ? "explicit" : "none";
+    if (pkg === undefined && npm !== undefined) {
+      const derived = packageForNpm(npm);
+      if (derived !== undefined) {
+        pkg = derived;
+        packageSource = "modelsdev";
+      }
+    }
+
+    let baseURL = m.baseURL ?? u.baseURL;
+    let baseURLSource: MetadataSource = baseURL !== undefined ? "explicit" : "none";
+    if (baseURL === undefined && api !== undefined) {
+      const host = hostOf(api);
+      if (hostTrusted(host, u.trustedHosts)) {
+        baseURL = api;
+        baseURLSource = "modelsdev";
+      } else {
+        warnOnce(`untrusted-api:${u.id}:${host ?? api}`, {
+          level: "warn",
+          msg: "models.dev api host is not in trustedHosts; leaving baseURL unresolved",
+          upstream: u.id,
+          host,
+          trusted: u.trustedHosts ?? [],
+        });
+      }
+    }
+    return { package: pkg, packageSource, baseURL, baseURLSource };
+  }
+
   function candidateKeys(u: GatewayUpstream, m: GatewayModel): string[] {
     const mRef = refOf(m.modelsDev);
     const uRef = refOf(u.modelsDev);
@@ -159,6 +209,10 @@ export function createModelResolver(
     if (!p || p.api == null) return [];
     const providerHost = hostOf(p.api);
     const upstreamHost = hostOf(u.baseURL);
+    // With `baseURL` omitted the upstream id names the models.dev provider
+    // directly, so it is trusted by name; the base URL it yields is still
+    // host-pinned separately in `dialect()`.
+    if (upstreamHost === null) return [u.id];
     if (providerHost !== null && providerHost === upstreamHost) return [u.id];
     if (providerHost !== null && upstreamHost !== null) {
       warnOnce(`id-host-mismatch:${u.id}`, {
@@ -190,6 +244,9 @@ export function createModelResolver(
         return idx.hasProvider("anthropic") ? ["anthropic"] : [];
       case "@opencode/ai/providers/openai-compatible":
       case "@opencode/ai/providers/openai-compatible/responses":
+        return [];
+      default:
+        // package omitted: nothing to infer from (models.dev `npm` drives it).
         return [];
     }
   }
@@ -285,12 +342,23 @@ export function createModelResolver(
       cost: costFromConfig(m),
       costSource: m.cost !== undefined ? "explicit" : "none",
       modelsDev: null,
+      ...dialect(u, m, undefined, undefined),
     };
   }
 
-  function matched(u: GatewayUpstream, m: GatewayModel, hint: number | undefined, mm: ModelMatch): ResolvedModel {
+  function matched(
+    u: GatewayUpstream,
+    m: GatewayModel,
+    hint: number | undefined,
+    mm: ModelMatch,
+    idx: ModelsDevIndex,
+  ): ResolvedModel {
     const entry = mm.entry;
     const mdContext = entry.limit?.context;
+    // Transport: the per-model override beats the provider-level default.
+    const prov = idx.getProvider(mm.provider);
+    const npm = entry.provider?.npm ?? prov?.npm;
+    const api = entry.provider?.api ?? prov?.api;
 
     let context: number | undefined;
     let contextSource: MetadataSource;
@@ -352,6 +420,7 @@ export function createModelResolver(
       cost,
       costSource,
       modelsDev: { provider: mm.provider, model: mm.model },
+      ...dialect(u, m, npm, api),
     };
   }
 
@@ -360,13 +429,20 @@ export function createModelResolver(
       const idx = getIndex();
       if (idx === null || disabled(u, m)) return base(u, m, hint);
       const mm = match(u, m, idx);
-      return mm === null ? base(u, m, hint) : matched(u, m, hint, mm);
+      return mm === null ? base(u, m, hint) : matched(u, m, hint, mm, idx);
     },
 
     resolveDiscovered(u, id, hint) {
       const synthetic = { id } as GatewayModel;
       const idx = getIndex();
-      const mm = idx === null || disabled(u, synthetic) ? null : match(u, synthetic, idx);
+      if (idx === null || disabled(u, synthetic)) {
+        return {
+          context: hint ?? null,
+          contextSource: hint !== undefined ? "discover" : "none",
+          modelsDev: null,
+        };
+      }
+      const mm = match(u, synthetic, idx);
       if (mm === null) {
         return {
           context: hint ?? null,
@@ -374,7 +450,7 @@ export function createModelResolver(
           modelsDev: null,
         };
       }
-      const resolved = matched(u, synthetic, hint, mm);
+      const resolved = matched(u, synthetic, hint, mm, idx);
       return {
         context: resolved.model.context ?? null,
         contextSource: resolved.contextSource,

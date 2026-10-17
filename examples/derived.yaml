@@ -1,0 +1,35 @@
+# Collapsed OpenCode Go config (F11): one upstream, a model-id list, and the
+# dialect + base URL derived per model from models.dev. The catalog is loaded on
+# startup; `trustedHosts` is the anchor that pins the host a derived base URL
+# may use.
+#
+#   npm @ai-sdk/openai-compatible -> chat       (…/go/openai/v1)
+#   npm @ai-sdk/openai            -> Responses  (…/go/openai/v1)
+#   npm @ai-sdk/anthropic         -> Messages   (…/go/anthropic/v1)
+#
+# A model the catalog does not know pins package+baseURL on the model itself
+# (deepseek-v4-flash-vision-exp has no models.dev entry).
+upstreams:
+  - id: opencode-go
+    apiKeyEnv: ZEN_API_KEY
+    adapter: opencode
+    sessionHeader: x-opencode-session
+    trustedHosts: [opencode.ai]
+    modelsDev: { provider: opencode-go }
+    discover: true
+    discoverUrl: https://opencode.ai/inference/go/v1/models
+    models:
+      # chat (openai-compatible)
+      - id: glm-5.3-flash
+      - id: kimi-k3
+      - id: space-bunny
+      - id: deepseek-v4-pro
+      # Responses
+      - id: muse-spark-1.3-contributor
+      # Messages (anthropic)
+      - id: qwen3.8-max
+      - id: minimax-m3
+      # not in models.dev: pin the transport on the model
+      - id: deepseek-v4-flash-vision-exp
+        package: "@opencode/ai/providers/openai-compatible"
+        baseURL: https://opencode.ai/inference/go/openai/v1

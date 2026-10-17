@@ -55,6 +55,44 @@ When a model resolves from models.dev, the resolved **context** feeds
 exceeds the context) but has no runtime effect yet. The gateway never mutates the
 parsed config.
 
+## Deriving the dialect & base URL
+
+An upstream may omit `package` and `baseURL`. The gateway then derives them **per
+model** from models.dev — the dialect from the catalog's provider `npm`, the base
+URL from its `api` — so a dialect-split provider collapses to a model-id list:
+
+```yaml
+upstreams:
+  - id: opencode-go
+    apiKeyEnv: ZEN_API_KEY
+    adapter: opencode
+    trustedHosts: [opencode.ai]        # required when baseURL is omitted
+    modelsDev: { provider: opencode-go }
+    models:
+      - id: muse-spark-1.3-contributor # npm @ai-sdk/openai -> Responses
+      - id: glm-5.3-flash              # npm @ai-sdk/openai-compatible -> chat
+      - id: qwen3.8-max                # npm @ai-sdk/anthropic -> Messages
+```
+
+`npm` maps to a gateway package: `@ai-sdk/openai-compatible` →
+`openai-compatible`, `@ai-sdk/openai` → `openai-compatible/responses`,
+`@ai-sdk/anthropic` → `anthropic-compatible`. Any other npm (e.g.
+`@ai-sdk/google`) has no package yet, so that model stays unresolved.
+
+Precedence is explicit config first: a set `package`/`baseURL` is never
+overridden. Both may also be set on a single model — the escape hatch for a model
+the catalog does not know — and that model-level value wins over the upstream's
+and over derivation. A **derived** base URL is a trust decision — it is accepted
+only when its host is in `trustedHosts` (exact, case-insensitive), otherwise the
+model is left unroutable and a warning is logged. This is why `trustedHosts` is
+required whenever `baseURL` is omitted (and at least one model would derive it):
+without it a compromised catalog could point this upstream's key at another host.
+A model with no resolvable dialect or base URL is neither routable (`404`) nor
+advertised in `GET /v1/models`.
+
+Derivation needs `adapter: opencode` (the translating adapter): a `passthrough`
+upstream relays Chat Completions regardless of dialect.
+
 ## Upstream headers & sessions
 
 Every upstream request carries a distinct `user-agent: openproxy/<version>` (not
@@ -162,7 +200,8 @@ OPENPROXY_LIVE_TEST=1 bun test              # plus a live check vs opencode.ai/i
 Working: `GET /healthz`, `GET /v1/models` (registry + opt-in `discover: true`
 live merge with fail-open fallback, models.dev/discovery `context_length`
 enrichment), `POST /v1/chat/completions` (non-stream + SSE), `GET /librechat/tokenConfig`,
-`GET /librechat.yaml.fragment`.
+`GET /librechat.yaml.fragment`. An upstream may omit `package`/`baseURL` and have
+them derived per model from models.dev, host-pinned by `trustedHosts` (F11).
 
 Adapters: `passthrough` (default) and `opencode`, which translates Chat Completions
 through `@opencode/ai` for `anthropic`, `anthropic-compatible`, `openai`,

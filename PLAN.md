@@ -175,6 +175,7 @@ cluster/registry target). See `README.md` for the current feature set.
 - **M2 adapters:** ✅ vendor-agnostic `src/adapter/` translating through `@opencode/ai` for all provider packages; vision + tool-call + streaming; per-model `dropParams`/`supportsVision`/`supportsTools`; `/librechat.yaml.fragment`; latency/tokens/context_ratio log event.
 - **M3:** ✅ `POST /v1/responses` inbound (non-stream + SSE); ✅ models.dev snapshot sync (fetch + cache + atomic refresh); ⛔ gitops deploy (`gitops/apps/openproxy` + ingress) — not started.
 - **M4 hardening:** ✅ client auth (open by default, warn once, enforced when configured); ✅ rate limits (global + per-upstream); ✅ per-request cost accounting from models.dev pricing; ✅ docs + examples.
+- **F11 (post-M4):** ✅ `package`/`baseURL` optional per upstream — derived per model from models.dev (`provider.npm` → dialect, `provider.api` → base URL), host-pinned by `trustedHosts`, with a per-model override for models the catalog lacks. Unroutable models 404 and are omitted from `/v1/models`.
 
 ## 8. Test plan (per milestone)
 

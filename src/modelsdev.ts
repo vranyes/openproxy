@@ -31,6 +31,13 @@ export interface ModelsDevModel {
   };
   canonical_model_id?: string;
   family?: string;
+  /**
+   * Per-model transport override (F11). When present it wins over the
+   * provider-level `npm`/`api`: `npm` names the dialect, `api` the base URL.
+   * e.g. muse-spark-1.3-contributor carries `{ npm: "@ai-sdk/openai",
+   * api: ".../inference/go/openai/v1" }` inside the opencode-go provider.
+   */
+  provider?: { npm?: string; api?: string };
 }
 
 export interface ModelsDevProvider {

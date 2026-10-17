@@ -23,8 +23,12 @@ type ProviderSettings = ({ baseURL: string; apiKey: string } | { baseURL: string
 
 /** Auth-aware settings shared by every provider package's `configure`. */
 function settingsOf(u: GatewayUpstream): ProviderSettings {
+  const baseURL = u.baseURL;
+  if (baseURL === undefined) {
+    throw new Error(`upstream ${u.id} has no baseURL (unroutable)`);
+  }
   const apiKey = resolveApiKey(u);
-  const base = apiKey ? { baseURL: u.baseURL, apiKey } : { baseURL: u.baseURL, auth: Auth.none };
+  const base = apiKey ? { baseURL, apiKey } : { baseURL, auth: Auth.none };
   // F8: pass static/session headers only when present. (Callers enrich the
   // upstream with a default user-agent first, so in the server path this is
   // effectively always true; the guard matters for direct modelFor calls.)
@@ -33,8 +37,12 @@ function settingsOf(u: GatewayUpstream): ProviderSettings {
 
 /** Build the provider-native language model for an upstream, dispatching by `package`. */
 export function modelFor(upstream: GatewayUpstream, id: string): Model {
+  const pkg = upstream.package;
+  if (pkg === undefined) {
+    throw new Error(`upstream ${upstream.id} has no package (unroutable)`);
+  }
   const settings = settingsOf(upstream);
-  switch (upstream.package) {
+  switch (pkg) {
     case "@opencode/ai/providers/anthropic":
       return Anthropic.configure(settings).model(id);
     case "@opencode/ai/providers/anthropic-compatible":
@@ -49,7 +57,7 @@ export function modelFor(upstream: GatewayUpstream, id: string): Model {
     case "@opencode/ai/providers/openai-compatible/responses":
       return OpenAICompatibleResponses.configure(settings).model(id);
     default: {
-      const n: never = upstream.package;
+      const n: never = pkg;
       throw new Error(`unsupported provider package: ${String(n)}`);
     }
   }

@@ -147,7 +147,7 @@ describe("adapter", () => {
 });
 
 describe("example configs parse", () => {
-  for (const file of ["../examples/gateway.yaml", "../examples/zen.yaml"]) {
+  for (const file of ["../examples/gateway.yaml", "../examples/zen.yaml", "../examples/derived.yaml"]) {
     test(file, () => {
       const raw = parseYaml(readFileSync(new URL(file, import.meta.url), "utf8"));
       expect(() => GatewayConfigSchema.parse(raw)).not.toThrow();
@@ -292,5 +292,53 @@ describe("rateLimit config", () => {
     const cfg = parse();
     expect(cfg.rateLimit).toBeUndefined();
     expect(cfg.upstreams[0]!.rateLimit).toBeUndefined();
+  });
+});
+
+describe("derived dialect + baseURL (F11)", () => {
+  test("package and baseURL may both be omitted when trustedHosts is set", () => {
+    const cfg = parse({ package: undefined, baseURL: undefined, trustedHosts: ["opencode.ai"] });
+    expect(cfg.upstreams[0]!.package).toBeUndefined();
+    expect(cfg.upstreams[0]!.baseURL).toBeUndefined();
+    expect(cfg.upstreams[0]!.trustedHosts).toEqual(["opencode.ai"]);
+  });
+
+  test("package alone may be omitted (baseURL explicit)", () => {
+    const cfg = parse({ package: undefined });
+    expect(cfg.upstreams[0]!.package).toBeUndefined();
+    expect(cfg.upstreams[0]!.baseURL).toBe("http://upstream.test/v1");
+  });
+
+  test("baseURL alone may be omitted (package explicit) with trustedHosts", () => {
+    const cfg = parse({ baseURL: undefined, trustedHosts: ["opencode.ai"] });
+    expect(cfg.upstreams[0]!.package).toBe("@opencode/ai/providers/openai-compatible");
+    expect(cfg.upstreams[0]!.baseURL).toBeUndefined();
+  });
+
+  test("trustedHosts is required when baseURL is omitted", () => {
+    expect(() => parse({ baseURL: undefined })).toThrow(/trustedHosts is required/);
+    expect(() => parse({ baseURL: undefined, trustedHosts: [] })).toThrow(/trustedHosts is required/);
+  });
+
+  test("trustedHosts entries must be bare hostnames", () => {
+    expect(() => parse({ baseURL: undefined, trustedHosts: ["https://opencode.ai"] })).toThrow(/bare hostnames/);
+    expect(() => parse({ baseURL: undefined, trustedHosts: ["*.opencode.ai"] })).toThrow(/bare hostnames/);
+    expect(() => parse({ baseURL: undefined, trustedHosts: ["opencode.ai"] })).not.toThrow();
+  });
+
+  test("a model-level package/baseURL override parses", () => {
+    const cfg = parse({
+      models: [{ id: "m", package: "@opencode/ai/providers/anthropic", baseURL: "https://m.test/v1" }],
+    });
+    expect(cfg.upstreams[0]!.models[0]!.package).toBe("@opencode/ai/providers/anthropic");
+    expect(cfg.upstreams[0]!.models[0]!.baseURL).toBe("https://m.test/v1");
+  });
+
+  test("every model pinning a baseURL drops the trustedHosts requirement", () => {
+    expect(() =>
+      parse({ baseURL: undefined, models: [{ id: "m", baseURL: "https://m.test/v1" }] }),
+    ).not.toThrow();
+    // ...but a single model that would derive still needs the anchor.
+    expect(() => parse({ baseURL: undefined, models: [{ id: "m" }] })).toThrow(/trustedHosts is required/);
   });
 });

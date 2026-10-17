@@ -14,6 +14,8 @@ export const KNOWN_PROVIDER_PACKAGES = [
   "@opencode/ai/providers/anthropic-compatible",
 ] as const;
 
+export type ProviderPackage = (typeof KNOWN_PROVIDER_PACKAGES)[number];
+
 export const ProviderPackageSchema = z.enum(KNOWN_PROVIDER_PACKAGES, {
   errorMap: () => ({
     message: `package must be a known @opencode/ai provider subpath (one of: ${KNOWN_PROVIDER_PACKAGES.join(", ")})`,
@@ -81,6 +83,12 @@ export const ModelSchema = z
       .describe("Request-body parameter names removed before forwarding upstream (e.g. stop, user)."),
     // models.dev pin / opt-out for this model.
     modelsDev: ModelsDevOverrideSchema.optional(),
+    // Per-model dialect / base URL override (F11). Wins over the upstream's own
+    // `package`/`baseURL` and over any models.dev-derived value — the escape
+    // hatch for a model the catalog does not know. An explicit base URL here is
+    // trusted as-is (no `trustedHosts` check, since it is operator-supplied).
+    package: ProviderPackageSchema.optional(),
+    baseURL: z.string().url().optional(),
     // F7b: explicit pricing override. When set, wins over models.dev pricing.
     cost: ModelCostSchema.optional(),
   })
@@ -115,34 +123,63 @@ export const HeadersSchema = z.record(z.string(), z.string()).superRefine((heade
   }
 });
 
-export const UpstreamSchema = z.object({
-  id: z.string(),
-  package: ProviderPackageSchema,
-  baseURL: z.string().url(),
-  apiKey: z.string().optional(),
-  // Env var holding the upstream key; explicit null means "no auth" (unset, not an error).
-  apiKeyEnv: z.string().nullable().optional(),
-  discover: z.boolean().optional(),
-  // Full URL to fetch the model list from; defaults to `<baseURL>/models`.
-  discoverUrl: z.string().url().optional(),
-  // Translation strategy; defaults to `passthrough` when omitted. The `opencode`
-  // adapter dispatches by `package`, so any known package is accepted.
-  adapter: AdapterKindSchema.optional(),
-  // models.dev pin / opt-out for every model on this upstream.
-  modelsDev: ModelsDevOverrideSchema.optional(),
-  // F7c: per-upstream token bucket. Off when omitted.
-  rateLimit: RateLimitSchema.optional(),
-  // F8: static headers sent on every upstream request (validated name/value).
-  headers: HeadersSchema.optional(),
-  // F8: header carrying an opaque per-conversation id; forwarded when inbound,
-  // else generated (memoized per upstream) or left to a static `headers` value.
-  sessionHeader: z
-    .string()
-    .regex(HEADER_NAME_RE, "sessionHeader must be a valid HTTP header name")
-    .refine((n) => !FORBIDDEN_SESSION_HEADERS.has(n.toLowerCase()), "sessionHeader must not be a credential header")
-    .optional(),
-  models: z.array(ModelSchema).min(1),
-});
+// A trusted-host entry: an exact DNS hostname (case-insensitive). Kept strict so
+// a `.`, `*`, or scheme can never sneak into the allowlist and widen it.
+const TRUSTED_HOST_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i;
+
+export const UpstreamSchema = z
+  .object({
+    id: z.string(),
+    // Dialect + base URL. Both may be omitted: when a model's upstream leaves
+    // them unset the gateway derives them per model from models.dev (F11) — the
+    // dialect from the catalog's provider `npm`, the base URL from its `api`.
+    // `trustedHosts` is then the anchor that keeps a catalog-supplied host from
+    // receiving this upstream's key. Explicit values always win.
+    package: ProviderPackageSchema.optional(),
+    baseURL: z.string().url().optional(),
+    // Hosts a models.dev-derived baseURL may use. Required when `baseURL` is
+    // omitted so a compromised catalog cannot redirect the key.
+    trustedHosts: z
+      .array(z.string().regex(TRUSTED_HOST_RE, "trustedHosts entries must be bare hostnames"))
+      .min(1)
+      .optional(),
+    apiKey: z.string().optional(),
+    // Env var holding the upstream key; explicit null means "no auth" (unset, not an error).
+    apiKeyEnv: z.string().nullable().optional(),
+    discover: z.boolean().optional(),
+    // Full URL to fetch the model list from; defaults to `<baseURL>/models`.
+    discoverUrl: z.string().url().optional(),
+    // Translation strategy; defaults to `passthrough` when omitted. The `opencode`
+    // adapter dispatches by `package`, so any known package is accepted.
+    adapter: AdapterKindSchema.optional(),
+    // models.dev pin / opt-out for every model on this upstream.
+    modelsDev: ModelsDevOverrideSchema.optional(),
+    // F7c: per-upstream token bucket. Off when omitted.
+    rateLimit: RateLimitSchema.optional(),
+    // F8: static headers sent on every upstream request (validated name/value).
+    headers: HeadersSchema.optional(),
+    // F8: header carrying an opaque per-conversation id; forwarded when inbound,
+    // else generated (memoized per upstream) or left to a static `headers` value.
+    sessionHeader: z
+      .string()
+      .regex(HEADER_NAME_RE, "sessionHeader must be a valid HTTP header name")
+      .refine((n) => !FORBIDDEN_SESSION_HEADERS.has(n.toLowerCase()), "sessionHeader must not be a credential header")
+      .optional(),
+    models: z.array(ModelSchema).min(1),
+  })
+  .superRefine((u, ctx) => {
+    // A derived baseURL is a trust decision: without an allowlist the gateway
+    // would send this upstream's apiKey to whatever host models.dev names. Only
+    // models that actually fall through to a derived base URL need the anchor.
+    const needsDerivedBase = u.baseURL === undefined && u.models.some((m) => m.baseURL === undefined);
+    if (needsDerivedBase && (u.trustedHosts === undefined || u.trustedHosts.length === 0)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["trustedHosts"],
+        message: "trustedHosts is required when baseURL is omitted (it pins the host models.dev may supply)",
+      });
+    }
+  });
 
 // F6: options for the generated LibreChat fragment (GET /librechat.yaml.fragment).
 export const LibreChatSchema = z.object({
