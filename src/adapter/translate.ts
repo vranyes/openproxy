@@ -364,6 +364,7 @@ export function metaOf(
     contextRatio,
     finishReason,
     costUsd: costUsdValue,
+    outcome: "ok",
   };
 }
 

@@ -17,6 +17,7 @@ import type { ModelsDevIndex } from "./modelsdev";
 import { errorResponse } from "./ops/errors";
 import { authToken, isAuthorized, resolveAuth, unauthorizedResponse } from "./ops/auth";
 import { createRateLimiter } from "./ops/ratelimit";
+import { createMetrics, type MetricsRegistry } from "./ops/metrics";
 import { noopLogger, safeLog, type Logger } from "./ops/log";
 
 export type UpstreamFetcher = (url: string, init: RequestInit) => Promise<Response>;
@@ -31,6 +32,8 @@ export interface AppOptions {
   now?: () => number;
   /** F8: session-id generator; default memoizes one id per upstream id. */
   generateSessionId?: (upstreamId: string) => string;
+  /** Prometheus metrics registry; defaults to a fresh in-memory registry. */
+  metrics?: MetricsRegistry;
 }
 
 interface Route {
@@ -81,6 +84,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
   const fetchUpstream: UpstreamFetcher = opts.fetchUpstream ?? ((url, init) => globalThis.fetch(url, init));
   const getConfig: ConfigProvider = typeof config === "function" ? config : () => config;
   const logger = opts.logger ?? noopLogger;
+  const metrics = opts.metrics ?? createMetrics();
   // F7c: single limiter for the process; reads the live config so a reload is
   // picked up, memoizing buckets per scope:id:rpm:burst.
   const limiter = createRateLimiter({ now: opts.now ?? (() => Date.now()), config: () => getConfig() });
@@ -178,6 +182,12 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
 
     if (req.method === "GET" && url.pathname === "/healthz") {
       return Response.json({ status: "ok" });
+    }
+
+    if (req.method === "GET" && url.pathname === "/metrics") {
+      return new Response(metrics.render(), {
+        headers: { "content-type": "text/plain; version=0.0.4" },
+      });
     }
 
     // F7a: gate every data route. Runs inside `handle` (logged `fetch` wrapper)
@@ -348,11 +358,16 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       safeLog(logger, { level: "error", msg: "request failed", request_id: requestId, method: req.method,
         path, model: ctx.model, upstream: ctx.upstream, status: 500,
         latency_ms: Math.round(performance.now() - started), error: err.message, stack: err.stack });
+      metrics.observeRequest({ method: req.method, path, status: 500,
+        model: ctx.model, upstream: ctx.upstream, durationSeconds: (performance.now() - started) / 1000 });
       return errorResponse("internal error", 500, "server_error");
     }
+    const latencyMs = Math.round(performance.now() - started);
+    metrics.observeRequest({ method: req.method, path, status: res.status,
+      model: ctx.model, upstream: ctx.upstream, durationSeconds: (performance.now() - started) / 1000 });
     safeLog(logger, { level: "info", msg: "request", request_id: requestId, method: req.method, path,
       model: ctx.model, upstream: ctx.upstream, status: res.status,
-      latency_ms: Math.round(performance.now() - started),
+      latency_ms: latencyMs,
       // Passthrough today: bodies not parsed; usage unknown and ALWAYS null for streams. F4 fills these.
       usage: null, context_ratio: null });
     // Translated adapter path: emit a follow-up `generation` event once the
@@ -360,14 +375,23 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     if (ctx.completed) {
       void ctx.completed.then((meta) => {
         if (!meta) return;
-        safeLog(logger, { level: "info", msg: "generation", request_id: requestId, model: ctx.model, upstream: ctx.upstream,
+        const outcome = meta.outcome ?? "ok";
+        const level = outcome === "midstream_error" ? "error" : "info";
+        safeLog(logger, { level, msg: "generation", request_id: requestId, model: ctx.model, upstream: ctx.upstream,
           tokens_in: meta.usage?.tokensIn ?? null, tokens_out: meta.usage?.tokensOut ?? null,
           tokens_total: meta.usage?.tokensTotal ?? null, context_ratio: meta.contextRatio,
-          finish_reason: meta.finishReason, cost_usd: meta.costUsd ?? null });
+          finish_reason: meta.finishReason, cost_usd: meta.costUsd ?? null,
+          outcome, error_tag: meta.errorTag ?? null, error: meta.errorMessage ?? null });
+        metrics.observeGeneration({ model: ctx.model, upstream: ctx.upstream,
+          finishReason: meta.finishReason, outcome,
+          errorTag: meta.errorTag ?? null,
+          tokensIn: meta.usage?.tokensIn ?? null, tokensOut: meta.usage?.tokensOut ?? null,
+          costUsd: meta.costUsd ?? null,
+          durationSeconds: (performance.now() - started) / 1000 });
       }).catch(() => {});
     }
     return res;
   }
 
-  return { fetch };
+  return { fetch, metrics };
 }

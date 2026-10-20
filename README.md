@@ -210,4 +210,11 @@ through `@opencode/ai` for `anthropic`, `anthropic-compatible`, `openai`,
 handling returns `400 context_length_exceeded` with `max_context`. models.dev
 snapshot sync (fetch + cache + refresh, fail-open) feeds context metadata.
 
+Observability: `GET /metrics` serves Prometheus exposition (no auth, same port
+as `/healthz`): request counts/latency, generations by `outcome`/`finish_reason`,
+`midstream_errors_total` (stream failed after headers) and
+`empty_generations_total` (stream closed ok with null usage — silent
+truncation). The `generation` log carries `outcome`, `error_tag`, and `error`
+(mid-stream failures log at `error` level with `finish_reason: "error"`).
+
 Next: client auth, inbound `POST /v1/responses`, cost accounting.

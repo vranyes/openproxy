@@ -26,12 +26,19 @@ export interface TokenUsage {
 }
 
 /** Metrics derived from one generation, for the `generation` log event. Null fields mean "unknown". */
+export type GenerationOutcome = "ok" | "midstream_error";
 export interface AdapterMeta {
   usage: TokenUsage | null;
   contextRatio: number | null;
   finishReason: string | null;
   /** USD for the request, or null when usage or pricing is unknown. */
   costUsd: number | null;
+  /** "ok" for a clean close; "midstream_error" when the stream failed after headers. */
+  outcome: GenerationOutcome;
+  /** Provider-neutral error tag (e.g. Transport, Timeout) for mid-stream failures. */
+  errorTag?: string | null;
+  /** Truncated provider error message for mid-stream failures. */
+  errorMessage?: string | null;
 }
 
 export interface AdapterInput {

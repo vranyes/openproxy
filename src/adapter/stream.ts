@@ -60,6 +60,7 @@ export function drainStream<State>(
     async start(controller) {
       const state = dialect.state();
       const sendFrame = (frame: string): void => send(controller, frame);
+      let streamError: { tag: string; message: string } | null = null;
       try {
         dialect.open(sendFrame, state);
         if (!first.done) dialect.event(first.value, sendFrame, state);
@@ -70,13 +71,28 @@ export function drainStream<State>(
         }
         dialect.close(sendFrame, state);
       } catch (err) {
-        const reason = (err as { reason?: { message?: unknown } } | null | undefined)?.reason;
-        const message = reason?.message !== undefined ? String(reason.message) : String(err);
+        const reason = (err as { reason?: { _tag?: unknown; message?: unknown } } | null | undefined)?.reason;
+        const tag = typeof reason?._tag === "string" && reason._tag.length > 0 ? reason._tag : "unknown";
+        const rawMessage =
+          reason?.message !== undefined ? String(reason.message) : err instanceof Error ? err.message : String(err);
+        const message = rawMessage.slice(0, 500);
+        streamError = { tag, message };
         dialect.error(message, sendFrame);
       } finally {
         safeClose(controller);
         await iterator.return?.().catch(() => {});
-        resolveCompleted(dialect.meta(state));
+        const base = dialect.meta(state);
+        if (streamError !== null) {
+          resolveCompleted({
+            ...base,
+            outcome: "midstream_error",
+            finishReason: "error",
+            errorTag: streamError.tag,
+            errorMessage: streamError.message,
+          });
+        } else {
+          resolveCompleted({ ...base, outcome: "ok" });
+        }
       }
     },
     cancel() {
