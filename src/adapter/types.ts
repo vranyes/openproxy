@@ -26,7 +26,7 @@ export interface TokenUsage {
 }
 
 /** Metrics derived from one generation, for the `generation` log event. Null fields mean "unknown". */
-export type GenerationOutcome = "ok" | "midstream_error";
+export type GenerationOutcome = "ok" | "midstream_error" | "client_aborted";
 export interface AdapterMeta {
   usage: TokenUsage | null;
   contextRatio: number | null;
@@ -54,6 +54,10 @@ export interface AdapterResult {
   response: Response;
   /** Resolves when a translated generation has produced its metrics; absent for passthrough. */
   completed?: Promise<AdapterMeta | null>;
+  /** Pre-headers upstream attempts (1 + retries). Present on translated results. */
+  attempts?: number;
+  /** Error tags of retried attempts, in order. */
+  retryTags?: string[];
 }
 
 export interface Adapter {

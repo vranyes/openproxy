@@ -34,24 +34,40 @@ export interface ResolveUpstreamHeadersInput {
   generateSessionId?: (upstreamId: string) => string;
 }
 
+export type SessionSource = "forwarded" | "generated" | "pinned" | "none";
+
+export interface ResolvedUpstreamHeaders {
+  headers: Record<string, string>;
+  sessionSource: SessionSource;
+}
+
 /**
  * Build the upstream request headers for one call. `inbound` is the client
- * request's headers: a safe `sessionHeader` value is forwarded verbatim, an
- * unsafe/absent one falls back to a generated id (unless a static header pinned
+ * request's headers: the first safe value across `sessionFromHeaders`
+ * (default `[sessionHeader]`) is forwarded verbatim under `sessionHeader`, an
+ * unsafe/absent set falls back to a generated id (unless a static header pinned
  * it), and when `inbound` is omitted the session is never touched.
  */
-export function resolveUpstreamHeaders(input: ResolveUpstreamHeadersInput): Record<string, string> {
+export function resolveUpstreamHeaders(input: ResolveUpstreamHeadersInput): ResolvedUpstreamHeaders {
   const out: Record<string, string> = {};
   setHeader(out, "user-agent", DEFAULT_USER_AGENT);
   for (const [n, v] of Object.entries(input.upstream.headers ?? {})) setHeader(out, n, v);
   const name = input.upstream.sessionHeader;
   // N1: only handle the session when there is an inbound request (discovery passes none).
-  if (name !== undefined && input.inbound !== undefined) {
-    const raw = input.inbound.get(name) ?? null;
+  if (name === undefined || input.inbound === undefined) return { headers: out, sessionSource: "none" };
+  const candidates = input.upstream.sessionFromHeaders ?? [name];
+  for (const candidate of candidates) {
+    const raw = input.inbound.get(candidate) ?? null;
     const forwarded = raw !== null && SAFE_HEADER_VALUE.test(raw) ? raw : undefined;
-    if (forwarded !== undefined) setHeader(out, name, forwarded);
-    else if (!hasHeader(out, name)) setHeader(out, name, (input.generateSessionId ?? (() => crypto.randomUUID()))(input.upstream.id));
-    // else: operator-pinned static session header is preserved
+    if (forwarded !== undefined) {
+      setHeader(out, name, forwarded);
+      return { headers: out, sessionSource: "forwarded" };
+    }
   }
-  return out;
+  if (!hasHeader(out, name)) {
+    setHeader(out, name, (input.generateSessionId ?? (() => crypto.randomUUID()))(input.upstream.id));
+    return { headers: out, sessionSource: "generated" };
+  }
+  // else: operator-pinned static session header is preserved
+  return { headers: out, sessionSource: "pinned" };
 }

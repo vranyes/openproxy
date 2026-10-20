@@ -14,6 +14,7 @@ import { errorResponse } from "../ops/errors";
 import { aiErrorResponse } from "./ai-error";
 import { containsImage, containsTools } from "./content";
 import type { AdapterDeps } from "./index";
+import { isRetryableError, resolveRetry, retryTagOf, sleepWithSignal } from "./retry";
 import { drainStream, type StreamDialect } from "./stream";
 import { metaOf, openaiToIR } from "./translate";
 import type { AdapterMeta, AdapterResult } from "./types";
@@ -57,27 +58,58 @@ export async function runGeneration(
   const ir = openaiToIR(stripped, req.model);
   const m = deps.ai.model(req.upstream, req.model);
   const input = { ...ir, model: m };
+  const retry = resolveRetry(req.model.retry, req.upstream.retry);
+  const retryTags: string[] = [];
+  let attempts = 0;
 
   // 3. Non-stream: reassemble the upstream stream into one completion.
   if (req.chatBody.stream !== true) {
-    try {
-      const result = await deps.ai.generate(m, input, { signal: req.signal });
-      return {
-        response: Response.json(dialect.render(result, req.inboundId)),
-        completed: Promise.resolve(metaOf(result, req.model, req.cost)),
-      };
-    } catch (err) {
-      return { response: aiErrorResponse(err, req.model) };
+    for (;;) {
+      attempts += 1;
+      try {
+        const result = await deps.ai.generate(m, input, { signal: req.signal });
+        return {
+          response: Response.json(dialect.render(result, req.inboundId)),
+          completed: Promise.resolve(metaOf(result, req.model, req.cost)),
+          attempts,
+          retryTags,
+        };
+      } catch (err) {
+        if (req.signal?.aborted || attempts >= retry.maxAttempts || !isRetryableError(err)) {
+          return { response: aiErrorResponse(err, req.model), attempts, retryTags };
+        }
+        retryTags.push(retryTagOf(err));
+        try {
+          await sleepWithSignal(retry.backoffMs * 2 ** (attempts - 1), req.signal);
+        } catch {
+          return { response: aiErrorResponse(err, req.model), attempts, retryTags };
+        }
+      }
     }
   }
 
   // 4. Stream: pull the first event so pre-stream failures become an HTTP error.
-  const iterator = deps.ai.stream(m, input, { signal: req.signal })[Symbol.asyncIterator]();
+  // Only the prefetch is retried; post-headers failures are unretryable.
+  let iterator: AsyncIterator<LLMEvent>;
   let first: IteratorResult<LLMEvent>;
-  try {
-    first = await iterator.next();
-  } catch (err) {
-    return { response: aiErrorResponse(err, req.model) };
+  for (;;) {
+    attempts += 1;
+    iterator = deps.ai.stream(m, input, { signal: req.signal })[Symbol.asyncIterator]();
+    try {
+      first = await iterator.next();
+      break;
+    } catch (err) {
+      await iterator.return?.().catch(() => {});
+      if (req.signal?.aborted || attempts >= retry.maxAttempts || !isRetryableError(err)) {
+        return { response: aiErrorResponse(err, req.model), attempts, retryTags };
+      }
+      retryTags.push(retryTagOf(err));
+      try {
+        await sleepWithSignal(retry.backoffMs * 2 ** (attempts - 1), req.signal);
+      } catch {
+        return { response: aiErrorResponse(err, req.model), attempts, retryTags };
+      }
+    }
   }
 
   let resolveCompleted!: (meta: AdapterMeta | null) => void;
@@ -96,5 +128,7 @@ export async function runGeneration(
       headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
     }),
     completed,
+    attempts,
+    retryTags,
   };
 }

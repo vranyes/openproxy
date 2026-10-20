@@ -214,7 +214,19 @@ Observability: `GET /metrics` serves Prometheus exposition (no auth, same port
 as `/healthz`): request counts/latency, generations by `outcome`/`finish_reason`,
 `midstream_errors_total` (stream failed after headers) and
 `empty_generations_total` (stream closed ok with null usage — silent
-truncation). The `generation` log carries `outcome`, `error_tag`, and `error`
-(mid-stream failures log at `error` level with `finish_reason: "error"`).
+truncation), plus `upstream_retries_total` (pre-headers retries by error tag),
+`session_source_total` (forwarded/generated/pinned per upstream) and
+`discovery_errors_total`. The `generation` log carries `outcome`, `error_tag`,
+`error`, `retries` and `session_source` (mid-stream failures log at `error`
+level with `finish_reason: "error"`; client aborts log `outcome:
+"client_aborted"`).
+
+Reliability knobs (per model, falling back to upstream): `http:
+{ timeout, headerTimeout, chunkTimeout }` in ms or `false` (SDK defaults:
+header 5min, chunk 15min, no whole-request timeout), and `retry:
+{ maxAttempts: 1-5, backoffMs }` for bounded pre-headers retries on
+Timeout/Transport/5xx only (never 4xx). `sessionFromHeaders: [...]` lists
+inbound headers to try as the session value, sent under `sessionHeader`.
+Oversize bodies (>10 MiB) are rejected with `413 body_too_large`.
 
 Next: client auth, inbound `POST /v1/responses`, cost accounting.

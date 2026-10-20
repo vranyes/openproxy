@@ -19,29 +19,44 @@ import { resolveApiKey, type GatewayModel, type GatewayUpstream } from "../confi
 type Model = LanguageModel;
 type ProviderSettings = ({ baseURL: string; apiKey: string } | { baseURL: string; auth: Auth.Definition }) & {
   headers?: Record<string, string>;
+  http?: { timeout?: number | false; headerTimeout?: number | false; chunkTimeout?: number | false };
 };
 
 /** Auth-aware settings shared by every provider package's `configure`. */
-function settingsOf(u: GatewayUpstream): ProviderSettings {
+function settingsOf(u: GatewayUpstream, model?: GatewayModel): ProviderSettings {
   const baseURL = u.baseURL;
   if (baseURL === undefined) {
     throw new Error(`upstream ${u.id} has no baseURL (unroutable)`);
   }
   const apiKey = resolveApiKey(u);
   const base = apiKey ? { baseURL, apiKey } : { baseURL, auth: Auth.none };
+  const out: ProviderSettings = { ...base };
   // F8: pass static/session headers only when present. (Callers enrich the
   // upstream with a default user-agent first, so in the server path this is
   // effectively always true; the guard matters for direct modelFor calls.)
-  return u.headers && Object.keys(u.headers).length > 0 ? { ...base, headers: u.headers } : base;
+  if (u.headers && Object.keys(u.headers).length > 0) out.headers = u.headers;
+  // Optional HTTP bounds: per-model wins over upstream; absent stays unset so
+  // the SDK defaults (header 5min, chunk 15min, no whole-request timeout) apply.
+  // Merged per field so a model can override one bound without losing the rest.
+  const http = { ...u.http, ...model?.http };
+  if (http.timeout !== undefined || http.headerTimeout !== undefined || http.chunkTimeout !== undefined) {
+    out.http = http;
+  }
+  return out;
 }
 
 /** Build the provider-native language model for an upstream, dispatching by `package`. */
-export function modelFor(upstream: GatewayUpstream, id: string): Model {
+export function modelFor(upstream: GatewayUpstream, id: string, model?: GatewayModel): Model;
+export function modelFor(upstream: GatewayUpstream, model: GatewayModel): Model;
+export function modelFor(upstream: GatewayUpstream, idOrModel: string | GatewayModel, model?: GatewayModel): Model {
   const pkg = upstream.package;
   if (pkg === undefined) {
     throw new Error(`upstream ${upstream.id} has no package (unroutable)`);
   }
-  const settings = settingsOf(upstream);
+  const resolved: GatewayModel | undefined =
+    typeof idOrModel === "string" ? model : (idOrModel as GatewayModel);
+  const id = typeof idOrModel === "string" ? idOrModel : (idOrModel as GatewayModel).upstream ?? (idOrModel as GatewayModel).id;
+  const settings = settingsOf(upstream, resolved);
   switch (pkg) {
     case "@opencode/ai/providers/anthropic":
       return Anthropic.configure(settings).model(id);
@@ -70,7 +85,7 @@ export interface AiRuntime {
 }
 
 export const defaultAiRuntime: AiRuntime = {
-  model: (upstream, model) => modelFor(upstream, model.upstream ?? model.id),
+  model: (upstream, model) => modelFor(upstream, model),
   generate: (m, input, opts) => ai.llm.generate({ ...input, model: m }, opts),
   stream: (m, input, opts) => ai.llm.stream({ ...input, model: m }, opts),
 };

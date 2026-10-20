@@ -56,7 +56,7 @@ function observeHistogram(h: Histogram, value: number): void {
   }
 }
 
-export type GenerationOutcome = "ok" | "midstream_error";
+export type GenerationOutcome = "ok" | "midstream_error" | "client_aborted";
 
 export interface RequestObservation {
   method: string;
@@ -89,6 +89,9 @@ export function createMetrics() {
   const tokensOutSum = new Map<string, { labels: Record<string, string>; sum: number }>();
   const costSum = new Map<string, { labels: Record<string, string>; sum: number }>();
   const generationDuration = new Map<string, Histogram>();
+  const retries = new Map<string, { labels: Record<string, string>; count: number }>();
+  const sessionSources = new Map<string, { labels: Record<string, string>; count: number }>();
+  const discoveryErrors = new Map<string, { labels: Record<string, string>; count: number }>();
 
   function inc(
     table: Map<string, { labels: Record<string, string>; count: number }>,
@@ -169,6 +172,22 @@ export function createMetrics() {
     }
   }
 
+  function observeRetry(model: string | null, upstream: string | null, tag: string): void {
+    const m = sanitize(model);
+    const u = sanitize(upstream);
+    const t = tag.length > 0 ? tag : "unknown";
+    inc(retries, `${m}\u0000${u}\u0000${t}`, { model: m, upstream: u, error_tag: t });
+  }
+
+  function observeSessionSource(upstream: string | null, source: string): void {
+    const u = sanitize(upstream);
+    inc(sessionSources, `${u}\u0000${source}`, { upstream: u, source });
+  }
+
+  function observeDiscoveryError(upstream: string | null): void {
+    inc(discoveryErrors, sanitize(upstream), { upstream: sanitize(upstream) });
+  }
+
   function counter(name: string, help: string, table: Map<string, { labels: Record<string, string>; count: number }>): string {
     let out = `# HELP ${name} ${help}\n# TYPE ${name} counter\n`;
     for (const row of table.values()) {
@@ -223,6 +242,21 @@ export function createMetrics() {
       "Streams that closed ok with null token usage (silent truncation).",
       emptyGenerations,
     );
+    out += counter(
+      "openproxy_upstream_retries_total",
+      "Pre-headers upstream retry attempts by error tag.",
+      retries,
+    );
+    out += counter(
+      "openproxy_session_source_total",
+      "Upstream session id source by upstream (forwarded, generated, pinned, none).",
+      sessionSources,
+    );
+    out += counter(
+      "openproxy_discovery_errors_total",
+      "Upstream model-list discovery failures.",
+      discoveryErrors,
+    );
     out += sumCounter("openproxy_generation_tokens_in_total", "Sum of input tokens per model.", tokensInSum);
     out += sumCounter("openproxy_generation_tokens_out_total", "Sum of output tokens per model.", tokensOutSum);
     out += sumCounter("openproxy_generation_cost_usd_total", "Sum of estimated cost in USD per model.", costSum);
@@ -238,7 +272,7 @@ export function createMetrics() {
     return out;
   }
 
-  return { observeRequest, observeGeneration, render };
+  return { observeRequest, observeGeneration, observeRetry, observeSessionSource, observeDiscoveryError, render };
 }
 
 export type MetricsRegistry = ReturnType<typeof createMetrics>;

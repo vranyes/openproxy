@@ -127,7 +127,14 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     model: string | null;
     upstream: string | null;
     completed?: Promise<AdapterMeta | null> | null;
+    retries?: number;
+    retryTags?: string[];
+    sessionSource?: string | null;
   }
+
+  /** Max inbound JSON body (10 MiB): vision data-URLs are large, but unbounded
+   * parses risk OOM before auth/rate-limit context exists. */
+  const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
   /** null when the request may proceed; a 429 envelope when a bucket denies it. */
   function rateLimitResponse(upstreamId: string | null): Response | null {
@@ -149,9 +156,24 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     config: GatewayConfig,
     ctx: LogContext,
   ): Promise<{ route: Route; upstream: GatewayUpstream; body: Record<string, unknown> } | Response> {
+    const contentLength = req.headers.get("content-length");
+    if (contentLength !== null && /^\d+$/.test(contentLength.trim()) && Number(contentLength) > MAX_BODY_BYTES) {
+      return errorResponse("request body too large", 413, "invalid_request_error", { code: "body_too_large" });
+    }
+    // Enforce again on the materialized body: clients may use chunked encoding
+    // with no content-length (Bun's own Request likewise omits it).
+    let text: string;
+    try {
+      text = await req.text();
+    } catch {
+      return errorResponse("invalid JSON body", 400);
+    }
+    if (text.length > MAX_BODY_BYTES) {
+      return errorResponse("request body too large", 413, "invalid_request_error", { code: "body_too_large" });
+    }
     let body: Record<string, unknown>;
     try {
-      body = (await req.json()) as Record<string, unknown>;
+      body = JSON.parse(text) as Record<string, unknown>;
     } catch {
       return errorResponse("invalid JSON body", 400);
     }
@@ -169,9 +191,11 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     if (limited) return limited;
     // F8: enrich the route's upstream with the resolved headers so both the
     // passthrough and opencode adapters send them (auth unchanged).
+    const resolved = resolveUpstreamHeaders({ upstream: route.upstream, inbound: req.headers, generateSessionId });
+    ctx.sessionSource = resolved.sessionSource;
     const upstream: GatewayUpstream = {
       ...route.upstream,
-      headers: resolveUpstreamHeaders({ upstream: route.upstream, inbound: req.headers, generateSessionId }),
+      headers: resolved.headers,
     };
     return { route, upstream, body };
   }
@@ -233,11 +257,14 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         try {
           // F8: static headers + default UA; no session (discovery is not a
           // conversation) and apiKey auth applied last (case-collapsed).
-          const headers = resolveUpstreamHeaders({ upstream: u });
+          const { headers } = resolveUpstreamHeaders({ upstream: u });
           const apiKey = resolveApiKey(u);
           if (apiKey) setHeader(headers, "authorization", `Bearer ${apiKey}`);
           const res = await fetchUpstream(discoverUrl, { headers });
-          if (!res.ok) continue;
+          if (!res.ok) {
+            metrics.observeDiscoveryError(u.id);
+            continue;
+          }
           const listed = (await res.json()) as {
             data?: Array<{ id?: string; context_length?: unknown }>;
           };
@@ -259,6 +286,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
             }
           }
         } catch (e) {
+          metrics.observeDiscoveryError(u.id);
           safeLog(logger, { level: "error", msg: "discovery failed", upstream: u.id, error: String(e).slice(0, 300) });
           continue;
         }
@@ -319,6 +347,8 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         cost: resolved.cost,
       });
       ctx.completed = result.completed ?? null;
+      ctx.retries = (result.attempts ?? 1) - 1;
+      ctx.retryTags = result.retryTags ?? [];
       return result.response;
     }
 
@@ -338,6 +368,8 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
         cost: resolved.cost,
       });
       ctx.completed = result.completed ?? null;
+      ctx.retries = (result.attempts ?? 1) - 1;
+      ctx.retryTags = result.retryTags ?? [];
       return result.response;
     }
 
@@ -365,14 +397,24 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     const latencyMs = Math.round(performance.now() - started);
     metrics.observeRequest({ method: req.method, path, status: res.status,
       model: ctx.model, upstream: ctx.upstream, durationSeconds: (performance.now() - started) / 1000 });
+    if (ctx.sessionSource) metrics.observeSessionSource(ctx.upstream, ctx.sessionSource);
+    const retries = ctx.retries ?? 0;
+    if (retries > 0) {
+      for (const tag of ctx.retryTags ?? []) metrics.observeRetry(ctx.model, ctx.upstream, tag);
+      safeLog(logger, { level: "warn", msg: "upstream retries", request_id: requestId,
+        model: ctx.model, upstream: ctx.upstream, retries, retry_tags: ctx.retryTags ?? [] });
+    }
     safeLog(logger, { level: "info", msg: "request", request_id: requestId, method: req.method, path,
       model: ctx.model, upstream: ctx.upstream, status: res.status,
-      latency_ms: latencyMs,
+      latency_ms: latencyMs, retries,
+      session_source: ctx.sessionSource ?? null,
       // Passthrough today: bodies not parsed; usage unknown and ALWAYS null for streams. F4 fills these.
       usage: null, context_ratio: null });
     // Translated adapter path: emit a follow-up `generation` event once the
     // generation finishes (for SSE, after the stream drains). Never awaited.
     if (ctx.completed) {
+      const retriesAtCompletion = retries;
+      const retryTagsAtCompletion = ctx.retryTags ?? [];
       void ctx.completed.then((meta) => {
         if (!meta) return;
         const outcome = meta.outcome ?? "ok";
@@ -381,7 +423,9 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
           tokens_in: meta.usage?.tokensIn ?? null, tokens_out: meta.usage?.tokensOut ?? null,
           tokens_total: meta.usage?.tokensTotal ?? null, context_ratio: meta.contextRatio,
           finish_reason: meta.finishReason, cost_usd: meta.costUsd ?? null,
-          outcome, error_tag: meta.errorTag ?? null, error: meta.errorMessage ?? null });
+          outcome, error_tag: meta.errorTag ?? null, error: meta.errorMessage ?? null,
+          retries: retriesAtCompletion, retry_tags: retryTagsAtCompletion,
+          session_source: ctx.sessionSource ?? null });
         metrics.observeGeneration({ model: ctx.model, upstream: ctx.upstream,
           finishReason: meta.finishReason, outcome,
           errorTag: meta.errorTag ?? null,

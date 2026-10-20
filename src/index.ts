@@ -22,5 +22,24 @@ void modelsDev.refresh(); // non-blocking startup fetch
 const authWarning = authStartupWarning(store.current.auth);
 if (authWarning) logger(authWarning);
 
-Bun.serve({ port, fetch: app.fetch });
+const server = Bun.serve({ port, fetch: app.fetch });
 logger({ level: "info", msg: "listening", port, config: configPath });
+
+// Graceful shutdown: stop accepting, let in-flight streams drain briefly,
+// then close the config watcher and exit. Kubernetes sends SIGTERM first and
+// SIGKILLs after terminationGracePeriodSeconds regardless.
+let shuttingDown = false;
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger({ level: "info", msg: "shutting down", signal });
+  try {
+    server.stop();
+  } catch {
+    // already stopped
+  }
+  store.close();
+  setTimeout(() => process.exit(0), 5000);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

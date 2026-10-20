@@ -95,10 +95,26 @@ export function drainStream<State>(
         }
       }
     },
-    cancel() {
+    cancel(reason) {
       if (closed) return;
       closed = true;
       void iterator.return?.().catch(() => {});
+      // Client went away mid-stream: resolve so the `generation` event and
+      // metrics record the abort instead of vanishing.
+      try {
+        const state = dialect.state();
+        const base = dialect.meta(state);
+        const message = reason instanceof Error ? reason.message : String(reason ?? "client aborted");
+        resolveCompleted({
+          ...base,
+          usage: null,
+          outcome: "client_aborted",
+          finishReason: "aborted",
+          errorMessage: message.slice(0, 500),
+        });
+      } catch {
+        resolveCompleted({ usage: null, contextRatio: null, finishReason: "aborted", costUsd: null, outcome: "client_aborted" });
+      }
     },
   });
 }

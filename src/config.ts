@@ -51,6 +51,26 @@ export const ModelCostSchema = z.object({
 }); // USD per 1,000,000 tokens (models.dev convention)
 export type ModelCostConfig = z.infer<typeof ModelCostSchema>;
 
+// Optional per-request HTTP bounds, mirroring @opencode/ai HttpOptions
+// (all defaults live in the SDK: header 5min, chunk 15min, no whole-request
+// timeout). Each field is milliseconds or `false` to disable; model wins over
+// upstream and both flow into the provider `configure()` settings.
+const HttpTimeoutSchema = z.union([z.number().int().positive(), z.literal(false)]);
+export const HttpSettingsSchema = z.object({
+  timeout: HttpTimeoutSchema.optional(),
+  headerTimeout: HttpTimeoutSchema.optional(),
+  chunkTimeout: HttpTimeoutSchema.optional(),
+});
+export type HttpSettings = z.infer<typeof HttpSettingsSchema>;
+
+// Bounded pre-headers retry (never after SSE headers are committed). Retries
+// only Timeout/Transport/5xx (never 4xx); model wins over upstream.
+export const RetrySchema = z.object({
+  maxAttempts: z.number().int().min(1).max(5).optional(),
+  backoffMs: z.number().int().min(0).max(30000).optional(),
+});
+export type RetryConfig = z.infer<typeof RetrySchema>;
+
 export const ModelSchema = z
   .object({
     id: z.string(),
@@ -91,6 +111,9 @@ export const ModelSchema = z
     baseURL: z.string().url().optional(),
     // F7b: explicit pricing override. When set, wins over models.dev pricing.
     cost: ModelCostSchema.optional(),
+    // Optional HTTP bounds + pre-headers retry. Model wins over upstream.
+    http: HttpSettingsSchema.optional(),
+    retry: RetrySchema.optional(),
   })
   .superRefine((m, ctx) => {
     if (m.context !== undefined && m.maxOutput !== undefined && m.maxOutput > m.context) {
@@ -156,6 +179,9 @@ export const UpstreamSchema = z
     modelsDev: ModelsDevOverrideSchema.optional(),
     // F7c: per-upstream token bucket. Off when omitted.
     rateLimit: RateLimitSchema.optional(),
+    // Optional HTTP bounds + pre-headers retry (a per-model value wins).
+    http: HttpSettingsSchema.optional(),
+    retry: RetrySchema.optional(),
     // F8: static headers sent on every upstream request (validated name/value).
     headers: HeadersSchema.optional(),
     // F8: header carrying an opaque per-conversation id; forwarded when inbound,
@@ -164,6 +190,13 @@ export const UpstreamSchema = z
       .string()
       .regex(HEADER_NAME_RE, "sessionHeader must be a valid HTTP header name")
       .refine((n) => !FORBIDDEN_SESSION_HEADERS.has(n.toLowerCase()), "sessionHeader must not be a credential header")
+      .optional(),
+    // Ordered inbound header names to try as the session value (first safe
+    // non-empty wins, sent under `sessionHeader`). Defaults to `[sessionHeader]`.
+    // Lets the operator pick up a client conversation id when one is known.
+    sessionFromHeaders: z
+      .array(z.string().regex(HEADER_NAME_RE, "sessionFromHeaders entries must be valid HTTP header names"))
+      .min(1)
       .optional(),
     models: z.array(ModelSchema).min(1),
   })
