@@ -128,6 +128,10 @@ describe("adapter", () => {
     expect(parse({ adapter: "passthrough" }).upstreams[0]!.adapter).toBe("passthrough");
     expect(parse({ adapter: "opencode" }).upstreams[0]!.adapter).toBe("opencode");
     expect(parse({ adapter: "openai-compatible" }).upstreams[0]!.adapter).toBe("openai-compatible");
+    expect(
+      parse({ adapter: "systemone", package: undefined, baseURL: "http://upstream.test/v1" }).upstreams[0]!
+        .adapter,
+    ).toBe("systemone");
   });
 
   test("absent parses to undefined", () => {
@@ -147,7 +151,7 @@ describe("adapter", () => {
 });
 
 describe("example configs parse", () => {
-  for (const file of ["../examples/gateway.yaml", "../examples/zen.yaml", "../examples/derived.yaml"]) {
+  for (const file of ["../examples/gateway.yaml", "../examples/zen.yaml", "../examples/derived.yaml", "../examples/systemone.yaml"]) {
     test(file, () => {
       const raw = parseYaml(readFileSync(new URL(file, import.meta.url), "utf8"));
       expect(() => GatewayConfigSchema.parse(raw)).not.toThrow();

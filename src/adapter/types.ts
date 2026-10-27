@@ -3,13 +3,15 @@
 // `passthrough` relays bytes to the upstream unchanged (today's behavior + F3
 // context-overflow classification); `opencode` translates the OpenAI Chat
 // Completions wire format into the @opencode/ai LLM IR and back, dispatching the
-// provider-native protocol by the upstream's `package`. The adapter is OPT-IN
+// provider-native protocol by the upstream's `package`. `systemone` relays Jev
+// decision requests (`POST /v1/systemone`) to the SystemOne endpoint verbatim —
+// no @opencode/ai provider speaks that dialect. The adapter is OPT-IN
 // per upstream. `openai-compatible` is accepted as a deprecated config alias for
 // `opencode` and canonicalized in `selectAdapter`.
 import type { GatewayModel, GatewayUpstream } from "../config";
 import type { ModelCost } from "../cost";
 
-export type AdapterKind = "passthrough" | "opencode";
+export type AdapterKind = "passthrough" | "opencode" | "systemone";
 
 /**
  * Billed token counts for the `generation` log event. The three base fields are

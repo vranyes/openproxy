@@ -25,9 +25,12 @@ export const ProviderPackageSchema = z.enum(KNOWN_PROVIDER_PACKAGES, {
 // F5: translation strategy for the chat path. `passthrough` (default) relays
 // bytes; `opencode` translates through @opencode/ai, dispatching by
 // `package`. `openai-compatible` is a deprecated alias for `opencode`.
-export const AdapterKindSchema = z.enum(["passthrough", "opencode", "openai-compatible"], {
+// `systemone` relays Jev decision requests (`POST /v1/systemone`) to the
+// SystemOne endpoint; it needs an explicit `baseURL` and no `package`
+// (no @opencode/ai provider speaks that dialect).
+export const AdapterKindSchema = z.enum(["passthrough", "opencode", "openai-compatible", "systemone"], {
   errorMap: () => ({
-    message: 'adapter must be "passthrough" or "opencode" ("openai-compatible" is a deprecated alias)',
+    message: 'adapter must be "passthrough", "opencode" or "systemone" ("openai-compatible" is a deprecated alias)',
   }),
 });
 
@@ -201,6 +204,35 @@ export const UpstreamSchema = z
     models: z.array(ModelSchema).min(1),
   })
   .superRefine((u, ctx) => {
+    // A `systemone` upstream relays Jev decision requests: it speaks no
+    // @opencode/ai dialect, so `package` must stay unset and the endpoint
+    // prefix must be explicit (there is nothing models.dev could derive).
+    if (u.adapter === "systemone") {
+      if (u.baseURL === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["baseURL"],
+          message: 'baseURL is required when adapter is "systemone"',
+        });
+      }
+      if (u.package !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["package"],
+          message: 'package must be omitted when adapter is "systemone"',
+        });
+      }
+      for (let i = 0; i < u.models.length; i += 1) {
+        const m = u.models[i]!;
+        if (m.package !== undefined || m.baseURL !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["models", i],
+            message: 'per-model package/baseURL are ignored when adapter is "systemone"',
+          });
+        }
+      }
+    }
     // A derived baseURL is a trust decision: without an allowlist the gateway
     // would send this upstream's apiKey to whatever host models.dev names. Only
     // models that actually fall through to a derived base URL need the anchor.

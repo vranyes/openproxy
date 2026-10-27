@@ -25,6 +25,12 @@ describe("selectAdapter", () => {
     expect(selectAdapter(upstream({ adapter: "opencode" }))).toBe("opencode");
   });
 
+  test("adapter systemone selects the systemone adapter", () => {
+    expect(
+      selectAdapter(upstream({ adapter: "systemone", package: undefined, baseURL: "http://upstream.test/v1" })),
+    ).toBe("systemone");
+  });
+
   test("the deprecated openai-compatible alias canonicalizes to opencode", () => {
     expect(selectAdapter(upstream({ adapter: "openai-compatible" }))).toBe("opencode");
   });

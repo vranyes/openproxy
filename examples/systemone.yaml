@@ -1,0 +1,16 @@
+# Gateway config for Jev (System One) on OpenCode's inference API.
+# Endpoint: POST https://opencode.ai/inference/systemone/v1/systemone
+# Body: { model, state, questions } -> { model, answers, usage }.
+# No @opencode/ai provider speaks this dialect, so the gateway relays
+# verbatim (`adapter: systemone`, no `package`). Served at POST /v1/systemone.
+# Jev ids are never advertised in GET /v1/models (no chat context window).
+upstreams:
+  - id: opencode-systemone
+    adapter: systemone
+    baseURL: https://opencode.ai/inference/systemone/v1
+    apiKeyEnv: OPENCODE_API_KEY
+    sessionHeader: x-opencode-session
+    models:
+      - id: jev-1.13-free
+      - id: jev-1.13
+        cost: { input: 0.042, output: 0 }

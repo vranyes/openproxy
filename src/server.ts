@@ -98,15 +98,37 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
    * (F11): the effective upstream carries those resolved values. A model whose
    * dialect or base URL cannot be resolved is NOT routable (null -> 404)
    * instead of being relayed on a guessed wire format.
+   *
+   * Chat/responses routing skips `systemone` upstreams (and vice versa): Jev
+   * ids are only reachable via `POST /v1/systemone`.
    */
   function findModel(config: GatewayConfig, id: string): Route | null {
     for (const upstream of config.upstreams) {
+      if (selectAdapter(upstream) === "systemone") continue;
       const model = upstream.models.find((m) => m.id === id);
       if (!model) continue;
       const resolved = resolver.resolve(upstream, model);
       if (resolved.package === undefined || resolved.baseURL === undefined) return null;
       const effective: GatewayUpstream = { ...upstream, package: resolved.package, baseURL: resolved.baseURL };
       return { upstream: effective, model: resolved.model, resolved };
+    }
+    return null;
+  }
+
+  /**
+   * Resolve a requested id to a SystemOne (Jev) route. Only `systemone`
+   * upstreams are considered; the dialect needs no `package` (no @opencode/ai
+   * provider speaks it) but the upstream `baseURL` prefix is required
+   * (enforced by config validation).
+   */
+  function findSystemOne(config: GatewayConfig, id: string): Route | null {
+    for (const upstream of config.upstreams) {
+      if (selectAdapter(upstream) !== "systemone") continue;
+      const model = upstream.models.find((m) => m.id === id);
+      if (!model) continue;
+      if (upstream.baseURL === undefined) return null;
+      const resolved = resolver.resolve(upstream, model);
+      return { upstream, model: resolved.model, resolved };
     }
     return null;
   }
@@ -155,6 +177,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     req: Request,
     config: GatewayConfig,
     ctx: LogContext,
+    routeFor: (config: GatewayConfig, id: string) => Route | null = findModel,
   ): Promise<{ route: Route; upstream: GatewayUpstream; body: Record<string, unknown> } | Response> {
     const contentLength = req.headers.get("content-length");
     if (contentLength !== null && /^\d+$/.test(contentLength.trim()) && Number(contentLength) > MAX_BODY_BYTES) {
@@ -178,7 +201,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       return errorResponse("invalid JSON body", 400);
     }
     const requested = typeof body.model === "string" ? body.model : null;
-    const route = requested !== null ? findModel(config, requested) : null;
+    const route = requested !== null ? routeFor(config, requested) : null;
     if (!route) {
       return errorResponse(`model not found: ${String(body.model)}`, 404);
     }
@@ -231,6 +254,12 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       // even when the configured row itself is omitted for lacking a context.
       const known = new Set<string>();
       for (const u of config.upstreams) {
+        // SystemOne (Jev) ids shadow discovery but are never advertised here:
+        // they have no chat context window for LibreChat's `context_length`.
+        if (selectAdapter(u) === "systemone") {
+          for (const m of u.models) known.add(m.id);
+          continue;
+        }
         for (const m of u.models) {
           known.add(m.id);
           const resolved = resolver.resolve(u, m);
@@ -297,6 +326,7 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
     if (req.method === "GET" && url.pathname === "/librechat/tokenConfig") {
       const resolved: ResolvedModel[] = [];
       for (const u of config.upstreams) {
+        if (selectAdapter(u) === "systemone") continue;
         for (const m of u.models) resolved.push(resolver.resolve(u, m));
       }
       return Response.json(tokenConfigOf(resolved));
@@ -306,6 +336,12 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       const seen = new Set<string>();
       const models: FragmentModel[] = [];
       for (const u of config.upstreams) {
+        if (selectAdapter(u) === "systemone") {
+          for (const m of u.models) {
+            if (!seen.has(m.id)) seen.add(m.id);
+          }
+          continue;
+        }
         for (const m of u.models) {
           if (seen.has(m.id)) continue; // registry order, first wins
           seen.add(m.id);
@@ -359,6 +395,27 @@ export function createApp(config: GatewayConfig | ConfigProvider, opts: AppOptio
       if (prep instanceof Response) return prep;
       const { route, upstream, body } = prep;
       const adapter = createResponsesAdapter({ fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
+      const resolved = route.resolved;
+      const result = await adapter.handle({
+        upstream,
+        model: resolved.model,
+        body,
+        signal: req.signal,
+        cost: resolved.cost,
+      });
+      ctx.completed = result.completed ?? null;
+      ctx.retries = (result.attempts ?? 1) - 1;
+      ctx.retryTags = result.retryTags ?? [];
+      return result.response;
+    }
+
+    // Jev decision API: relayed verbatim to the SystemOne endpoint (no
+    // translation, no streaming). Only `systemone` upstreams are routable here.
+    if (req.method === "POST" && url.pathname === "/v1/systemone") {
+      const prep = await prepareGeneration(req, config, ctx, findSystemOne);
+      if (prep instanceof Response) return prep;
+      const { route, upstream, body } = prep;
+      const adapter = createAdapter("systemone", { fetchUpstream, ai: opts.ai ?? defaultAiRuntime });
       const resolved = route.resolved;
       const result = await adapter.handle({
         upstream,

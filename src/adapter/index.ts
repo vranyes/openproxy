@@ -5,6 +5,7 @@ import type { UpstreamFetcher } from "../server";
 import type { AiRuntime } from "./ai";
 import { createOpenCodeAdapter } from "./opencode";
 import { createPassthroughAdapter } from "./passthrough";
+import { createSystemOneAdapter } from "./systemone";
 import type { Adapter, AdapterKind } from "./types";
 
 export interface AdapterDeps {
@@ -27,5 +28,7 @@ export function createAdapter(kind: AdapterKind, deps: AdapterDeps): Adapter {
       return createPassthroughAdapter(deps);
     case "opencode":
       return createOpenCodeAdapter(deps);
+    case "systemone":
+      return createSystemOneAdapter(deps);
   }
 }

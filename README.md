@@ -199,14 +199,23 @@ OPENPROXY_LIVE_TEST=1 bun test              # plus a live check vs opencode.ai/i
 
 Working: `GET /healthz`, `GET /v1/models` (registry + opt-in `discover: true`
 live merge with fail-open fallback, models.dev/discovery `context_length`
-enrichment), `POST /v1/chat/completions` (non-stream + SSE), `GET /librechat/tokenConfig`,
+enrichment), `POST /v1/chat/completions` (non-stream + SSE), `POST /v1/responses`
+(non-stream + SSE), `POST /v1/systemone` (Jev relay, see below), `GET /librechat/tokenConfig`,
 `GET /librechat.yaml.fragment`. An upstream may omit `package`/`baseURL` and have
 them derived per model from models.dev, host-pinned by `trustedHosts` (F11).
 
-Adapters: `passthrough` (default) and `opencode`, which translates Chat Completions
+Adapters: `passthrough` (default), `opencode`, which translates Chat Completions
 through `@opencode/ai` for `anthropic`, `anthropic-compatible`, `openai`,
 `openai/chat`, `openai/responses`, `openai-compatible`, and
-`openai-compatible/responses` (tools, vision, streaming). Reactive context-overflow
+`openai-compatible/responses` (tools, vision, streaming), and `systemone`,
+which relays Jev decision requests (`POST /v1/systemone` with
+`{ model, state, questions }`) verbatim to `<baseURL>/systemone`
+(e.g. `https://opencode.ai/inference/systemone/v1`, see
+`examples/systemone.yaml`). No `package` (no provider speaks it), explicit
+`baseURL` required; Jev ids are isolated from chat/responses routes and omitted
+from `/v1/models`/`tokenConfig`. Upstream `usage` (`input_tokens`/`output_tokens`)
+feeds the `generation` log and cost accounting (set `cost: { input: 0.042, output: 0 }`
+for `jev-1.13`). Reactive context-overflow
 handling returns `400 context_length_exceeded` with `max_context`. models.dev
 snapshot sync (fetch + cache + refresh, fail-open) feeds context metadata.
 
